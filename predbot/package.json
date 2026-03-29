@@ -1,0 +1,20 @@
+{
+  "name": "predbot",
+  "version": "1.0.0",
+  "description": "Polymarket prediction bot — paper trading via Telegram",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.2",
+    "dotenv": "^16.4.5",
+    "node-cron": "^3.0.3",
+    "node-telegram-bot-api": "^0.64.0",
+    "uuid": "^10.0.0",
+    "@google/generative-ai": "^0.15.0",
+    "openai": "^4.52.7",
+    "rss-parser": "^3.13.0"
+  }
+}

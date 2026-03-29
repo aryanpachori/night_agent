@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:dev.jup.ag)",
+      "Bash(npm install:*)",
+      "Bash(node -e \"require\\(''dotenv''\\).config\\(\\); console.log\\(''Module load test...''\\); require\\(''./src/wallet/paperWallet''\\); require\\(''./src/math/expectedValue''\\); require\\(''./src/math/kelly''\\); require\\(''./src/math/brierScore''\\); require\\(''./src/news/newsFetcher''\\); console.log\\(''All modules loaded OK''\\);\")",
+      "Bash(node -e \":*)"
+    ]
+  }
+}

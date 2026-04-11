@@ -1,5 +1,5 @@
 {
-  "name": "predbot",
+  "name": "night-agent",
   "version": "1.0.0",
   "description": "Polymarket prediction bot — paper trading via Telegram",
   "main": "index.js",
@@ -8,13 +8,13 @@
     "dev": "node --watch index.js"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.15.0",
     "axios": "^1.7.2",
     "dotenv": "^16.4.5",
     "node-cron": "^3.0.3",
-    "node-telegram-bot-api": "^0.64.0",
-    "uuid": "^10.0.0",
-    "@google/generative-ai": "^0.15.0",
+    "node-telegram-bot-api": "^0.67.0",
     "openai": "^4.52.7",
-    "rss-parser": "^3.13.0"
+    "rss-parser": "^3.13.0",
+    "uuid": "^10.0.0"
   }
 }

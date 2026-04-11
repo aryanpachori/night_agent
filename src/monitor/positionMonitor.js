@@ -1,11 +1,9 @@
 'use strict';
 
 const { fetchMarket } = require('../scanner/marketScanner');
-const { fetchNewsForMarket } = require('../news/newsFetcher');
 const { estimateProbability } = require('../llm/probabilityEstimator');
-const { calculateEdge, calculateEV } = require('../math/expectedValue');
 const { recordOutcome } = require('../math/brierScore');
-const alerts = require('../telegram/alerts');
+const { sendExitAlert, sendStopLossAlert, sendRawMessage } = require('../telegram/alerts');
 const wallet = require('../wallet/paperWallet');
 
 const TAKE_PROFIT_THRESHOLD = 0.15;   // +15¢
@@ -58,20 +56,18 @@ async function checkPosition(position) {
   // Debounce — don't alert same position twice within 2 hours
   if (wallet.hasRecentPositionAlert(position.id)) return;
 
-  // Fetch latest news and re-run LLM
+  // Re-run LLM to check if edge has flipped
   let newEstimate = null;
   try {
-    const { articles } = await fetchNewsForMarket(position.marketQuestion, market.category);
-    if (articles.length > 0) {
-      const marketForLLM = {
-        question: position.marketQuestion,
-        yesPrice: market.yesPrice,
-        daysLeft: Math.round((new Date(market.closeTime) - Date.now()) / 86_400_000),
-        closeTime: market.closeTime,
-        category: market.category ?? '',
-      };
-      newEstimate = await estimateProbability(marketForLLM, articles);
-    }
+    const marketForLLM = {
+      id:        position.marketId,
+      question:  position.marketQuestion,
+      yesPrice:  market.yesPrice,
+      daysLeft:  Math.round((new Date(market.closeTime) - Date.now()) / 86_400_000),
+      closeTime: market.closeTime,
+      category:  market.category ?? '',
+    };
+    newEstimate = await estimateProbability(marketForLLM);
   } catch (err) {
     console.warn(`[monitor] LLM re-estimate failed for ${position.id}: ${err.message}`);
   }
@@ -82,7 +78,8 @@ async function checkPosition(position) {
   if (priceDiff >= TAKE_PROFIT_THRESHOLD) {
     console.log(`[monitor] Take profit triggered for ${position.id} (+${(priceDiff * 100).toFixed(1)}¢)`);
     wallet.markPositionAlerted(position.id);
-    await alerts.sendExitOpportunity(position, currentPrice, newEstimate);
+    const profit = (position.contracts * currentPrice) - position.totalCost;
+    await sendExitAlert(position, currentPrice, profit);
     return;
   }
 
@@ -90,7 +87,8 @@ async function checkPosition(position) {
   if (priceDiff <= -STOP_LOSS_THRESHOLD) {
     console.log(`[monitor] Stop loss triggered for ${position.id} (-${(Math.abs(priceDiff) * 100).toFixed(1)}¢)`);
     wallet.markPositionAlerted(position.id);
-    await alerts.sendStopLoss(position, currentPrice, newEstimate);
+    const loss = position.totalCost - (position.contracts * currentPrice);
+    await sendStopLossAlert(position, currentPrice, loss);
     return;
   }
 
@@ -104,7 +102,8 @@ async function checkPosition(position) {
     if (newEdge < -(parseFloat(process.env.MIN_EDGE) || 0.05)) {
       console.log(`[monitor] Edge flipped negative for ${position.id} (edge=${(newEdge * 100).toFixed(1)}%)`);
       wallet.markPositionAlerted(position.id);
-      await alerts.sendExitOpportunity(position, currentPrice, newEstimate);
+      const profit = (position.contracts * currentPrice) - position.totalCost;
+      await sendExitAlert(position, currentPrice, profit);
     }
   }
 }
@@ -122,7 +121,7 @@ async function handleResolution(position, market) {
     // Update Brier score
     recordOutcome(position.myEstimatedProbability, yesWon ? 1 : 0);
 
-    await alerts.sendText(
+    await sendRawMessage(
       `🏁 *Market Resolved*\n\n` +
       `_${position.marketQuestion}_\n` +
       `Result: *${market.result.toUpperCase()}*\n` +

@@ -27,6 +27,23 @@ function wantsAddMoreBet(text) {
   return /\b(add more|top up|increase (?:my )?bet|double down|bigger bet|more contracts|size up)\b/.test(t);
 }
 
+/** Same as /scan: run edge scan and send Telegram alerts with BET \\/ SKIP when filters pass\\. */
+function wantsBettingOpportunityScan(text) {
+  const t = text.toLowerCase();
+  if (/\b(give|show)\s+me\s+(?:some\s+)?(?:betting\s+)?opportunit/.test(t)) return true;
+  if (/\b(give|show)\s+me\s+events?\b/.test(t)) return true;
+  if (/\bfind\s+(?:me\s+)?(?:betting\s+)?opportunit/.test(t)) return true;
+  if (/\bscan\s+for\s+(?:bets?|opportunit|trades?)/.test(t)) return true;
+  if (/\bopportunit(?:y|ies)\b/.test(t) && /\b(bet|trade|betting|wager|pick)\b/.test(t)) return true;
+  if (/\bevents?\s+to\s+bet(?:\s+on)?\b/.test(t)) return true;
+  if (/\bwhat\s+(?:can|should)\s+i\s+bet\b/.test(t)) return true;
+  if (/\b(anything|something)\s+to\s+bet\b/.test(t)) return true;
+  if (/\bnew\s+(?:betting\s+)?(?:opportunit|picks?|edges?)\b/.test(t)) return true;
+  if (/\b(list|get)\s+(?:betting\s+)?opportunit/.test(t)) return true;
+  if (/\bbetting\s+opportunit/.test(t)) return true;
+  return false;
+}
+
 /** Natural language: user is asking about an open bet \\(not just listing positions\\). */
 function wantsPositionInsight(text) {
   const t = text.toLowerCase();
@@ -289,12 +306,20 @@ function createBot() {
     }
   });
 
-  // ── /scan ──────────────────────────────────────────────────────────────────
-  // Manually trigger a scan now
+  // ── /scan and /opportunities — edge scan, BET \\/ SKIP alerts ─────────────
+  async function replyRunScan(chatId) {
+    bot.sendMessage(chatId, 'Running opportunity scan…');
+    if (_runScanFunc) await _runScanFunc().catch(() => {});
+  }
+
   bot.onText(/\/scan/, async msg => {
     if (!guard(msg)) return;
-    bot.sendMessage(msg.chat.id, 'Running scan…');
-    if (_runScanFunc) _runScanFunc().catch(() => {});
+    await replyRunScan(msg.chat.id);
+  });
+
+  bot.onText(/\/opportunities/, async msg => {
+    if (!guard(msg)) return;
+    await replyRunScan(msg.chat.id);
   });
 
   // ── /more — extra opportunities (bypasses focus cap, up to 2) ───────────────
@@ -332,6 +357,17 @@ function createBot() {
     // ── Balance / wallet ──────────────────────────────────────────────────────
     if (text.includes('balance') || text.includes('wallet') || text.includes('money')) {
       reply(msg.chat.id, msgs.balanceMessage(wallet.getStats()));
+      return;
+    }
+
+    // ── NL + /opportunities: same as /scan \\(BET \\/ SKIP alerts\\) ───────────
+    if (wantsBettingOpportunityScan(text)) {
+      if (scannerPaused) {
+        bot.sendMessage(msg.chat.id, 'Scanning is paused\\. Send /resume first\\.', { parse_mode: 'MarkdownV2' });
+        return;
+      }
+      bot.sendMessage(msg.chat.id, 'Running opportunity scan\\. If any market passes filters, you will get alerts with BET \\/ SKIP buttons\\.', { parse_mode: 'MarkdownV2' });
+      if (_runScanFunc) await _runScanFunc().catch(err => console.error('[bot] nl opportunity scan:', err.message));
       return;
     }
 

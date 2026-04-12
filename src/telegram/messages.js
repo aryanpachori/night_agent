@@ -62,7 +62,7 @@ function escPct(n)        { return esc(pct(n)); }
 // ─── Startup ──────────────────────────────────────────────────────────────────
 function startupMessage(balance) {
   const cap = process.env.MAX_FOCUS_EVENTS || '2';
-  return `*Night Agent online*\n${DIV}\nBalance: ${escUsd(balance)} USDC\nScanning crypto markets \\(focus: up to ${esc(String(cap))} pending \\+ open\\)\nAsk: /status or ask when the event ends, volume, or win probability\nModel: Gemini Flash Lite \\| TA: EWMA vol \\+ BS \\+ momentum\n${DIV}\n/help for commands`;
+  return `*Night Agent online*\n${DIV}\nBalance: ${escUsd(balance)} USDC\nScanning crypto markets \\(focus: up to ${esc(String(cap))} pending \\+ open\\)\nSay *give me opportunities* or /scan for BET alerts \\| /status for open bets\nModel: Gemini Flash Lite \\| TA: EWMA vol \\+ BS \\+ momentum\n${DIV}\n/help for commands`;
 }
 
 function manualExitMinUnrealized() {
@@ -86,7 +86,7 @@ function manualExitKeyboardRow(positionId, index1based) {
 
 // ─── Help ─────────────────────────────────────────────────────────────────────
 function helpMessage() {
-  return `*Night Agent — commands*\n${DIV}\n/balance — wallet balance \\& PnL\n/positions — open positions \\(live end time \\& vol; exit buttons when partially up/down\\)\n/status — snapshot of open bets\n/history — last 10 closed positions\n/stats — performance stats\n/markets — available crypto markets\n/scan — run scan now\n/more — extra opportunities\n/pause — pause scanning\n/resume — resume scanning\n/ping — health check\n${DIV}\n*Focus mode:* up to *2* pending opportunities \\+ open bets\\. Auto\\-scan waits at the cap\\.\n${DIV}\n*Chat about your bets:*\n• when does this event end \\| what is the volume\n• chances of winning \\| current status\n• status of my bet \\| model win percent\n• how to add size\n${DIV}\n*Natural language:* show markets, more opportunities, should I bet on \\.\\.\\., balance, open positions\n${DIV}\n*Alerts:* BET \\/ SKIP; exit: EXIT \\/ HOLD; manual exit on /positions or /status when unrealized PnL meets threshold`;
+  return `*Night Agent — commands*\n${DIV}\n/balance — wallet balance \\& PnL\n/positions — open positions \\(live end time \\& vol; exit buttons when partially up/down\\)\n/status — snapshot of open bets\n/history — last 10 closed positions\n/stats — performance stats\n/markets — list markets \\(prices only\\)\n/scan / /opportunities — run edge scan; sends BET \\/ SKIP if a market passes filters\n/more — extra opportunities \\(same idea, focus rules\\)\n/pause — pause scanning\n/resume — resume scanning\n/ping — health check\n${DIV}\n*Focus mode:* up to *2* pending opportunities \\+ open bets\\. Auto\\-scan waits at the cap\\.\n${DIV}\n*Chat about your bets:*\n• when does this event end \\| what is the volume\n• chances of winning \\| current status\n• status of my bet \\| model win percent\n• how to add size\n${DIV}\n*Ask for bets:* "give me opportunities", "show me events", "what can I bet on" \\| same as /scan\n${DIV}\n*Natural language:* show markets \\(list only\\), more opportunities, should I bet on \\.\\.\\., balance, open positions\n${DIV}\n*Alerts:* BET \\/ SKIP; exit: EXIT \\/ HOLD; manual exit on /positions or /status when unrealized PnL meets threshold`;
 }
 
 // ─── Balance ──────────────────────────────────────────────────────────────────

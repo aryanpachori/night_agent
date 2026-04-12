@@ -5,24 +5,32 @@
  * All prices are in decimal (0-1), not cents.
  */
 function calculateEV(myProbability, marketPrice) {
-  const winAmount = 1 - marketPrice;    // profit per contract if win
-  const loseAmount = marketPrice;       // loss per contract if lose
   const lossProbability = 1 - myProbability;
 
-  const ev = (myProbability * winAmount) - (lossProbability * loseAmount);
+  // EV per $1 staked on YES at `marketPrice` (standard binary contract)
+  const winAmountYes = 1 - marketPrice;
+  const loseAmountYes = marketPrice;
+  const evYes =
+    myProbability * winAmountYes - lossProbability * loseAmountYes;
 
-  // Determine which side has positive edge
+  // EV per $1 staked on NO at (1 - marketPrice)
+  const noPrice = 1 - marketPrice;
+  const evNo =
+    lossProbability * marketPrice - myProbability * noPrice;
+
   const bettingYES = myProbability > marketPrice;
   const side = bettingYES ? 'YES' : 'NO';
-  const effectivePrice = bettingYES ? marketPrice : (1 - marketPrice);
+  const effectivePrice = bettingYES ? marketPrice : noPrice;
+
+  const ev = bettingYES ? evYes : evNo;
 
   return {
     ev,
+    evYes,
+    evNo,
     isPositive: ev > 0,
     side,
     effectivePrice,
-    // Also compute NO side for reference
-    noEV: ((1 - myProbability) * (1 - (1 - marketPrice))) - (myProbability * (1 - marketPrice)),
   };
 }
 

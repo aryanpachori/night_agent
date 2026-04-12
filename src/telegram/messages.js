@@ -13,6 +13,13 @@ function escFull(s) {
   return esc(String(s ?? ''));
 }
 
+/** Short line for list views \\(Telegram max 4096 chars per message\\). */
+function escShort(s, maxLen) {
+  const t = String(s || '').replace(/\s+/g, ' ').trim();
+  if (t.length <= maxLen) return esc(t);
+  return esc(t.slice(0, Math.max(0, maxLen - 1))) + '…';
+}
+
 /** MarkdownV2\\-safe UTC timestamp for chat */
 function escDateUtc(d) {
   if (!d) return '…';
@@ -86,7 +93,7 @@ function manualExitKeyboardRow(positionId, index1based) {
 
 // ─── Help ─────────────────────────────────────────────────────────────────────
 function helpMessage() {
-  return `*Night Agent — commands*\n${DIV}\n/balance — wallet balance \\& PnL\n/positions — open positions \\(live end time \\& vol; exit buttons when partially up/down\\)\n/status — snapshot of open bets\n/history — last 10 closed positions\n/stats — performance stats\n/markets — list markets \\(prices only\\)\n/scan / /opportunities — run edge scan; sends BET \\/ SKIP if a market passes filters\n/more — extra opportunities \\(same idea, focus rules\\)\n/pause — pause scanning\n/resume — resume scanning\n/ping — health check\n${DIV}\n*Focus mode:* up to *2* pending opportunities \\+ open bets\\. Auto\\-scan waits at the cap\\.\n${DIV}\n*Chat about your bets:*\n• when does this event end \\| what is the volume\n• chances of winning \\| current status\n• status of my bet \\| model win percent\n• how to add size\n${DIV}\n*Ask for bets:* "give me opportunities", "show me events", "what can I bet on" \\| same as /scan\n${DIV}\n*Natural language:* show markets \\(list only\\), more opportunities, should I bet on \\.\\.\\., balance, open positions\n${DIV}\n*Alerts:* BET \\/ SKIP; exit: EXIT \\/ HOLD; manual exit on /positions or /status when unrealized PnL meets threshold`;
+  return `*Night Agent — commands*\n${DIV}\n/balance — wallet balance \\& PnL\n/positions — open positions \\(live end time \\& vol; exit buttons when partially up/down\\)\n/status — snapshot of open bets\n/history — last 10 closed positions\n/stats — performance stats\n/markets — markets that pass the same opportunity filters as alerts \\(LLM; may take a minute\\)\n/scan / /opportunities — run edge scan; sends BET \\/ SKIP if a market passes filters\n/more — extra opportunities \\(same idea, focus rules\\)\n/pause — pause scanning\n/resume — resume scanning\n/ping — health check\n${DIV}\n*Focus mode:* up to *2* pending opportunities \\+ open bets\\. Auto\\-scan waits at the cap\\.\n${DIV}\n*Chat about your bets:*\n• when does this event end \\| what is the volume\n• chances of winning \\| current status\n• status of my bet \\| model win percent\n• how to add size\n${DIV}\n*Ask for bets:* "give me opportunities", "show me events", "what can I bet on" \\| same as /scan\n${DIV}\n*Natural language:* show markets \\(list only\\), more opportunities, should I bet on \\.\\.\\., balance, open positions\n${DIV}\n*Alerts:* BET \\/ SKIP; exit: EXIT \\/ HOLD; manual exit on /positions or /status when unrealized PnL meets threshold`;
 }
 
 // ─── Balance ──────────────────────────────────────────────────────────────────
@@ -126,36 +133,90 @@ function statsMessage(stats) {
   return `*Performance*\n${DIV}\nBalance: ${escUsd(stats.balance)} USDC\nPnL: ${esc(sign(stats.totalPnl) + usd(stats.totalPnl))} \\(${esc(String(stats.roi))}% ROI\\)\n\nTrades: ${stats.closedCount} closed\nWin rate: ${esc(String(stats.winRate))}%\nAvg edge: ${esc(String(stats.avgEdge))}%\nBrier: ${stats.brierScore !== null ? escFmt(stats.brierScore, 4) : 'N/A'} ${esc(brierGrade(stats.brierScore))}`;
 }
 
-// ─── Markets list ─────────────────────────────────────────────────────────────
-function marketsMessage(markets) {
-  if (!markets || markets.length === 0) return 'No crypto markets available right now\\.';
-  const lines = markets.slice(0, 15).map((m, i) => {
+// ─── Markets list \\(compact \\+ split: Telegram 4096 char limit\\) ─────────
+const MARKET_LIST_TITLE_MAX = 120;
+const MARKET_LIST_HINT_MAX  = 80;
+const MARKET_LIST_MAX_ITEMS = 30;
+/** ~3200 chars body per message so header/footer fit under 4096\\. */
+const TELEGRAM_CHUNK_BODY = 3200;
+
+/**
+ * @param {{ titlePrefix?: string, emptyMessage?: string, footerExtra?: string }} [options]
+ * @returns {string[]} One or more messages; each under Telegram limit\\.
+ */
+function marketsMessageChunks(markets, options = {}) {
+  const {
+    titlePrefix = 'Available crypto markets',
+    emptyMessage = 'No crypto markets available right now\\.',
+    footerExtra,
+  } = options;
+
+  if (!markets || markets.length === 0) return [emptyMessage];
+
+  const lines = markets.slice(0, MARKET_LIST_MAX_ITEMS).map((m, i) => {
+    const n = i + 1;
     const yPct = esc(fmt(m.yesPrice * 100, 1));
     const vol  = m.volumeUsd > 0 ? esc(`$${m.volumeUsd.toFixed(2)}`) : '$0';
     const endBit = m.closeTime
       ? ` \\| ${escDateUtc(m.closeTime)} \\(${esc(String(m.daysLeft ?? daysLeftFromClose(m.closeTime)))}d\\)`
       : ` \\| ${esc(String(m.daysLeft ?? '…'))}d left`;
-    const stats = `\n   YES: *${yPct}¢* \\| Vol: ${vol}${endBit}`;
+    let stats = `\n   YES: *${yPct}¢* \\| Vol: ${vol}${endBit}`;
+    const opp = m.opportunityPreview;
+    if (opp && typeof opp.edge === 'string') {
+      stats += `\n   Edge *${esc(opp.edge)}%* \\| Model *${esc(opp.model)}%* \\| ~$${esc(opp.bet)} bet`;
+    }
     const ev    = (m.eventTitle || '').trim();
     const out   = (m.outcomeTitle || '').trim();
     const hint  = (m.contextHint || '').trim();
-    const n     = i + 1;
 
     if (ev && out && ev !== out) {
-      let block = `${n}\\. *Event:* ${esc(ev)}\n   *Outcome:* ${esc(out)}`;
+      let block = `${n}\\. *Event:* ${escShort(ev, 100)}\n   *Outcome:* ${escShort(out, 100)}`;
       if (hint.length > 0) {
-        block += `\n   ${escFull(hint)}`;
+        block += `\n   ${escShort(hint, MARKET_LIST_HINT_MAX)}`;
       }
       return block + stats;
     }
 
     const q = (m.question || [ev, out].filter(Boolean).join(' — ')).trim();
     if (q.length > 0) {
-      return `${n}\\. ${escFull(q)}${stats}`;
+      return `${n}\\. ${escShort(q, MARKET_LIST_TITLE_MAX)}${stats}`;
     }
     return `${n}\\. _\\(no title from API\\)_${stats}`;
   });
-  return `*Available crypto markets \\(${markets.length}\\)*\n${DIV}\n${lines.join('\n\n')}\n${DIV}\n_Scan interval ${process.env.SCAN_INTERVAL_MINUTES || 5} min_`;
+
+  const footer =
+    footerExtra != null
+      ? `\n${DIV}\n${footerExtra}`
+      : `\n${DIV}\n_Titles shortened for chat limit\\. Full text on Jupiter\\. Scan ${process.env.SCAN_INTERVAL_MINUTES || 5} min_`;
+
+  const bodies = [];
+  let buf = [];
+  let bufLen = 0;
+
+  const flush = () => {
+    if (buf.length === 0) return;
+    bodies.push(buf.join('\n\n'));
+    buf = [];
+    bufLen = 0;
+  };
+
+  for (const line of lines) {
+    if (bufLen + line.length + 2 > TELEGRAM_CHUNK_BODY && buf.length > 0) flush();
+    buf.push(line);
+    bufLen += line.length + 2;
+  }
+  flush();
+
+  const total = bodies.length;
+  return bodies.map((body, idx) =>
+    `*${esc(titlePrefix)} \\(${markets.length}\\)${total > 1 ? ` part ${idx + 1}/${total}` : ''}*\n${DIV}\n${body}${footer}`,
+  );
+}
+
+/** @deprecated Prefer marketsMessageChunks; returns first chunk only\\. */
+function marketsMessage(markets) {
+  const c = marketsMessageChunks(markets);
+  return c[0] || '';
 }
 
 /** Event + outcome lines for bets \\(MarkdownV2\\). */
@@ -345,7 +406,7 @@ module.exports = {
   DIV,
   escFull,
   startupMessage, helpMessage, balanceMessage, positionsMessage,
-  historyMessage, statsMessage, marketsMessage, opportunityMessage,
+  historyMessage, statsMessage, marketsMessage, marketsMessageChunks, opportunityMessage,
   betConfirmedMessage, exitOpportunityMessage, stopLossMessage,
   resolvedMessage, manualExitClosedMessage, dailySummaryMessage,
   noOpenPositionsInsightMessage, positionInsightMessage,

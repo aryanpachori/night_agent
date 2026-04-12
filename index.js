@@ -18,10 +18,8 @@ const wallet                                     = require('./src/wallet/paperWa
 const { createBot, isPaused, registerScanners }  = require('./src/telegram/bot');
 const alerts                                     = require('./src/telegram/alerts');
 const { scanMarkets, fetchAllCryptoMarkets }     = require('./src/scanner/marketScanner');
+const { evaluateOpportunity }                    = require('./src/scanner/opportunityEvaluator');
 const { recordPrice }                            = require('./src/price/priceHistory');
-const { estimateProbability }                    = require('./src/llm/probabilityEstimator');
-const { calculateEV, calculateEdge }             = require('./src/math/expectedValue');
-const { calculateKelly, kellyToDollars }         = require('./src/math/kelly');
 const { monitorPositions }                       = require('./src/monitor/positionMonitor');
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -94,50 +92,18 @@ async function runOpportunityScan({ newOnly = false, moreMode = false } = {}) {
 
   let sent = 0;
   for (const market of markets) {
-    if (wallet.hasRecentMarketAlert(market.id)) continue;
-
     try {
       console.log(`\n[scan] Analysing: "${market.question.slice(0, 60)}"`);
       console.log(`[scan]   YES price: ${(market.yesPrice * 100).toFixed(1)}¢ | Vol: $${market.volumeUsd.toFixed(2)} | Days: ${market.daysLeft}`);
 
-      // Math pre-gate: only call Gemini if math already sees edge >= MIN_EDGE
-      // Saves LLM quota when the math signals agree with the crowd
-      if (market.ta?.mathProbability != null) {
-        const mathEdge = Math.abs(market.ta.mathProbability - market.yesPrice);
-        console.log(`[scan]   Math prob: ${(market.ta.mathProbability*100).toFixed(1)}% | math edge: ${(mathEdge*100).toFixed(1)}%`);
-        if (mathEdge < MIN_EDGE) {
-          console.log(`[scan]   ✗ Math edge too small — skip LLM`);
-          continue;
-        }
-      }
+      const r = await evaluateOpportunity(market, balance, { skipRecentAlert: true, verbose: true });
+      if (!r) continue;
 
-      const estimate = await estimateProbability(market);
+      console.log('[scan]   ✓ OPPORTUNITY — sending alert');
+      r.estimate.side = r.evResult.side;
+      r.estimate.effectivePrice = r.evResult.effectivePrice;
 
-      const edge = calculateEdge(estimate.probability, market.yesPrice);
-      console.log(`[scan]   Edge: ${(edge * 100).toFixed(1)}% (min ${MIN_EDGE * 100}%)`);
-
-      if (edge < MIN_EDGE) {
-        console.log(`[scan]   ✗ Edge too small — skip`);
-        continue;
-      }
-
-      const evResult = calculateEV(estimate.probability, market.yesPrice);
-      console.log(`[scan]   EV: ${evResult.ev.toFixed(4)} (positive: ${evResult.isPositive})`);
-      if (!evResult.isPositive) { console.log(`[scan]   ✗ Negative EV — skip`); continue; }
-
-      const kellyFraction = calculateKelly(estimate.probability, market.yesPrice, estimate.confidence);
-      console.log(`[scan]   Kelly fraction: ${(kellyFraction * 100).toFixed(2)}%`);
-      if (kellyFraction <= 0) { console.log(`[scan]   ✗ Kelly=0 — skip`); continue; }
-
-      const betAmount = kellyToDollars(kellyFraction, balance);
-      console.log(`[scan]   Bet amount: $${betAmount.toFixed(2)} (min $5)`);
-      if (betAmount < 5) { console.log(`[scan]   ✗ Bet below $5 minimum — skip`); continue; }
-
-      console.log(`[scan]   ✓ OPPORTUNITY — sending alert`);
-      estimate.side           = evResult.side;
-      estimate.effectivePrice = evResult.effectivePrice;
-
-      await alerts.sendOpportunityAlert(market, estimate, kellyFraction, betAmount, balance);
+      await alerts.sendOpportunityAlert(market, r.estimate, r.kellyFraction, r.betAmount, balance);
       sent++;
       if (sent >= maxSend) break;
       await sleep(500);

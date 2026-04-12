@@ -8,6 +8,7 @@ const { calculateKelly, kellyToDollars } = require('../math/kelly');
 const { calculateEdge, calculateEV }     = require('../math/expectedValue');
 const { estimateProbability }            = require('../llm/probabilityEstimator');
 const { fetchMarket }                  = require('../scanner/marketScanner');
+const { evaluateOpportunity }          = require('../scanner/opportunityEvaluator');
 
 let scannerPaused = false;
 function isPaused() { return scannerPaused; }
@@ -20,6 +21,37 @@ function registerScanners(scanFn, runFn, moreFn) {
   _scanMarketsFunc = scanFn;
   _runScanFunc     = runFn;
   _runMoreFunc     = moreFn || null;
+}
+
+/** Scanner-qualified markets that also pass LLM edge/EV/Kelly/min-bet \\(same as alert pipeline\\). */
+async function buildOpportunityMarketList() {
+  const minBankroll = parseFloat(process.env.MIN_BANKROLL) || 10;
+  const balance = wallet.getBalance();
+  if (balance < minBankroll) {
+    throw new Error(`Balance below $${minBankroll} — fund the wallet to evaluate opportunities.`);
+  }
+  if (!_scanMarketsFunc) return [];
+  const raw = await _scanMarketsFunc({ newOnly: false });
+  const out = [];
+  for (const m of raw) {
+    try {
+      const r = await evaluateOpportunity(m, balance, { skipRecentAlert: false });
+      if (!r) continue;
+      out.push({
+        ...m,
+        opportunityPreview: {
+          edge: (r.edge * 100).toFixed(1),
+          model: (r.estimate.probability * 100).toFixed(1),
+          bet: r.betAmount.toFixed(2),
+        },
+      });
+    } catch (e) {
+      console.error(`[bot] /markets opportunity ${m.id}:`, e.message);
+    }
+    await new Promise(res => setTimeout(res, 400));
+  }
+  out.sort((a, b) => b.volumeUsd - a.volumeUsd);
+  return out;
 }
 
 function wantsAddMoreBet(text) {
@@ -109,6 +141,14 @@ function createBot() {
   function guard(msg) { return String(msg.chat.id) === chatId; }
   function reply(id, text, extra = {}) {
     return bot.sendMessage(id, text, { parse_mode: 'MarkdownV2', ...extra });
+  }
+
+  /** Send one or more MarkdownV2 messages (Telegram 4096 char limit per message). */
+  async function sendMarkdownChunks(chatId, chunks) {
+    for (let i = 0; i < chunks.length; i++) {
+      await reply(chatId, chunks[i]);
+      if (i < chunks.length - 1) await new Promise(r => setTimeout(r, 350));
+    }
   }
 
   /** Close at Jupiter’s current bid side price \\(manual partial exit\\). */
@@ -268,7 +308,8 @@ function createBot() {
   }
 
   // ── /positions — live prices; Exit buttons when partially up/down ───────────
-  bot.onText(/\/positions/, async msg => {
+  // Aliases: common typos \\(Telegram does not fuzzy-match commands\\)
+  bot.onText(/\/(?:positions|poistions|postions)(?:@\w+)?/, async msg => {
     if (!guard(msg)) return;
     await sendLivePositionsList(msg.chat.id);
   });
@@ -291,18 +332,23 @@ function createBot() {
     reply(msg.chat.id, msgs.statsMessage(wallet.getStats()));
   });
 
-  // ── /markets ───────────────────────────────────────────────────────────────
-  // Lists currently available crypto markets with prices
+  // ── /markets — same pipeline as alerts \\(scanner \\+ LLM edge/EV/Kelly\\) ─────
   bot.onText(/\/markets/, async msg => {
     if (!guard(msg)) return;
-    bot.sendMessage(msg.chat.id, 'Fetching markets…');
+    bot.sendMessage(msg.chat.id, 'Evaluating opportunities (scanner + LLM)…');
     try {
-      const markets = _scanMarketsFunc
-        ? await _scanMarketsFunc({ newOnly: false })
-        : [];
-      reply(msg.chat.id, msgs.marketsMessage(markets));
+      const markets = await buildOpportunityMarketList();
+      await sendMarkdownChunks(
+        msg.chat.id,
+        msgs.marketsMessageChunks(markets, {
+          titlePrefix: 'Opportunity markets',
+          emptyMessage:
+            'No markets pass opportunity filters right now\\. Same checks as automatic alerts \\(edge, EV, Kelly, min bet\\)\\. Try /scan later or tune MIN\\_EDGE / bankroll\\.',
+          footerExtra: '_Same checks as automatic alerts\\. Titles shortened for chat limit\\._',
+        }),
+      );
     } catch (err) {
-      bot.sendMessage(msg.chat.id, `Error fetching markets: ${err.message}`);
+      bot.sendMessage(msg.chat.id, `Error: ${err.message}`);
     }
   });
 
@@ -396,12 +442,20 @@ function createBot() {
       return;
     }
 
-    // ── Show markets ──────────────────────────────────────────────────────────
+    // ── Show markets \\(opportunity list only\\) ───────────────────────────────
     if (text.includes('market') || text.includes('available') || text.includes('show') || text.includes('list')) {
-      bot.sendMessage(msg.chat.id, 'Fetching crypto markets…');
+      bot.sendMessage(msg.chat.id, 'Evaluating opportunities (scanner + LLM)…');
       try {
-        const markets = _scanMarketsFunc ? await _scanMarketsFunc({ newOnly: false }) : [];
-        reply(msg.chat.id, msgs.marketsMessage(markets));
+        const markets = await buildOpportunityMarketList();
+        await sendMarkdownChunks(
+          msg.chat.id,
+          msgs.marketsMessageChunks(markets, {
+            titlePrefix: 'Opportunity markets',
+            emptyMessage:
+              'No markets pass opportunity filters right now\\. Same checks as automatic alerts \\(edge, EV, Kelly, min bet\\)\\. Try /scan later or tune MIN\\_EDGE / bankroll\\.',
+            footerExtra: '_Same checks as automatic alerts\\. Titles shortened for chat limit\\._',
+          }),
+        );
       } catch (err) {
         bot.sendMessage(msg.chat.id, `Error: ${esc(err.message)}`);
       }

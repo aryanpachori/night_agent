@@ -25,11 +25,16 @@ const { calculateKelly, kellyToDollars }         = require('./src/math/kelly');
 const { monitorPositions }                       = require('./src/monitor/positionMonitor');
 
 // ─── Config ───────────────────────────────────────────────────────────────────
-const SCAN_INTERVAL    = parseInt(process.env.SCAN_INTERVAL_MINUTES)    || 5;
-const MONITOR_INTERVAL = parseInt(process.env.MONITOR_INTERVAL_MINUTES) || 30;
+const SCAN_INTERVAL         = parseInt(process.env.SCAN_INTERVAL_MINUTES)         || 5;
+const NEW_MARKET_SCAN_MINS  = parseInt(process.env.NEW_MARKET_SCAN_MINUTES, 10)   || 5;
+const MONITOR_INTERVAL      = parseInt(process.env.MONITOR_INTERVAL_MINUTES)      || 30;
 const MIN_EDGE         = parseFloat(process.env.MIN_EDGE)                || 0.08;
 const MIN_BANKROLL     = parseFloat(process.env.MIN_BANKROLL)            || 10;
 const MAX_OPEN         = parseInt(process.env.MAX_OPEN_POSITIONS)        || 10;
+/** Pending opportunity alerts \\+ open bets — auto\\-scan skips new opps when at cap. */
+const MAX_FOCUS_EVENTS = parseInt(process.env.MAX_FOCUS_EVENTS, 10)       || 2;
+const MAX_OPPORTUNITIES_PER_SCAN = parseInt(process.env.MAX_OPPORTUNITIES_PER_SCAN, 10) || 2;
+const MORE_OPPORTUNITIES_COUNT   = parseInt(process.env.MORE_OPPORTUNITIES_COUNT, 10)   || 2;
 
 // ─── 60-second price poller ───────────────────────────────────────────────────
 async function pollPrices() {
@@ -45,13 +50,13 @@ async function pollPrices() {
 }
 
 // ─── Main scan loop ───────────────────────────────────────────────────────────
-async function runScan({ newOnly = false } = {}) {
+async function runOpportunityScan({ newOnly = false, moreMode = false } = {}) {
   if (isPaused()) { console.log('[scan] Paused — skipping.'); return; }
 
   const balance = wallet.getBalance();
   if (balance < MIN_BANKROLL) {
     console.log(`[scan] Balance $${balance.toFixed(2)} below minimum. Halted.`);
-    await alerts.sendRawMessage(`⚠️ Balance too low ($${balance.toFixed(2)}). Scanning paused.`);
+    await alerts.sendRawMessage(`Balance too low ($${balance.toFixed(2)}). Scanning paused.`);
     return;
   }
   if (wallet.getOpenPositionCount() >= MAX_OPEN) {
@@ -59,7 +64,25 @@ async function runScan({ newOnly = false } = {}) {
     return;
   }
 
-  console.log(`[scan] ── Starting${newOnly ? ' new-market' : ' full'} scan ──`);
+  const pendingN = alerts.getPendingOpportunityCount();
+  const openN    = wallet.getOpenPositionCount();
+  const focusSlots = pendingN + openN;
+
+  if (!moreMode && focusSlots >= MAX_FOCUS_EVENTS) {
+    console.log(`[scan] Focus cap (${MAX_FOCUS_EVENTS}): ${pendingN} pending + ${openN} open — skip new opportunities`);
+    return;
+  }
+
+  const maxSend = moreMode
+    ? MORE_OPPORTUNITIES_COUNT
+    : Math.min(MAX_OPPORTUNITIES_PER_SCAN, Math.max(0, MAX_FOCUS_EVENTS - focusSlots));
+
+  if (maxSend <= 0) {
+    console.log('[scan] Nothing to send (maxSend=0).');
+    return;
+  }
+
+  console.log(`[scan] ── Starting${newOnly ? ' new-market' : ' full'} scan${moreMode ? ' (MORE)' : ''} — up to ${maxSend} alert(s) ──`);
 
   let markets;
   try {
@@ -116,7 +139,7 @@ async function runScan({ newOnly = false } = {}) {
 
       await alerts.sendOpportunityAlert(market, estimate, kellyFraction, betAmount, balance);
       sent++;
-      if (sent >= 3) break;
+      if (sent >= maxSend) break;
       await sleep(500);
     } catch (err) {
       console.error(`[scan] Error on "${market.question.slice(0, 40)}": ${err.message}`);
@@ -126,31 +149,39 @@ async function runScan({ newOnly = false } = {}) {
   console.log(`[scan] ── Done. Sent ${sent} alert(s) ──\n`);
 }
 
+async function runScan(opts = {}) {
+  return runOpportunityScan({ newOnly: !!opts.newOnly, moreMode: false });
+}
+
+async function runMoreOpportunities() {
+  return runOpportunityScan({ newOnly: false, moreMode: true });
+}
+
 // ─── Boot sequence ────────────────────────────────────────────────────────────
 async function main() {
-  console.log('╔═══════════════════════════════════════╗');
-  console.log('║  Night Agent — Crypto Paper Trading   ║');
-  console.log('╚═══════════════════════════════════════╝');
+  console.log('--- Night Agent (paper trading) ---');
   console.log(`[startup] Balance:      $${wallet.getBalance().toFixed(2)} USDC`);
   console.log(`[startup] Scan:         every ${SCAN_INTERVAL} min`);
+  console.log(`[startup] New-market:  every ${NEW_MARKET_SCAN_MINS} min`);
   console.log(`[startup] Monitor:      every ${MONITOR_INTERVAL} min`);
   console.log(`[startup] Min edge:     ${MIN_EDGE * 100}%`);
   console.log(`[startup] Max positions: ${MAX_OPEN}`);
+  console.log(`[startup] Focus cap:   ${MAX_FOCUS_EVENTS} (pending alerts + open bets)`);
 
   // 1. Start Telegram bot
   createBot();
 
   // 2. Register scanner functions so /markets and /scan commands work
-  registerScanners(scanMarkets, runScan);
+  registerScanners(scanMarkets, runScan, runMoreOpportunities);
 
   // 3. Price poller — every 60 seconds (feeds TA indicators)
   await pollPrices();
   cron.schedule('* * * * *', pollPrices);
   console.log('[startup] Price poller:    every 60s');
 
-  // 4. New-market fast scan — every 1 minute (first-mover)
-  cron.schedule('* * * * *', () => runScan({ newOnly: true }));
-  console.log('[startup] New-market scan: every 1 min');
+  // 4. New-market scan (default every 5 min — easier on Gemini free-tier RPD than every 1 min)
+  cron.schedule(buildCron(NEW_MARKET_SCAN_MINS), () => runScan({ newOnly: true }));
+  console.log(`[startup] New-market scan: ${buildCron(NEW_MARKET_SCAN_MINS)}`);
 
   // 5. Full scan with TA pre-filter
   await runScan();
@@ -164,7 +195,7 @@ async function main() {
     try { await monitorPositions(); }
     catch (err) { console.error(`[monitor] Error: ${err.message}`); }
   });
-  console.log(`[startup] Position monitor: ${monitorCron}`);
+  console.log(`[startup] Position monitor: ${monitorCron} (price ticks: move ≥ ${process.env.PRICE_TICK_MIN_MOVE || 0.04} / ${process.env.PRICE_TICK_INTERVAL_MINUTES || 12}min cooldown)`);
 
   // 7. Daily summary at 8am
   cron.schedule('0 8 * * *', async () => {
@@ -173,7 +204,7 @@ async function main() {
   });
   console.log('[startup] Daily summary:   08:00');
 
-  console.log('\n[startup] ✅ Night Agent fully started.\n');
+  console.log('\n[startup] Night Agent started.\n');
 }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────

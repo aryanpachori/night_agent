@@ -8,56 +8,165 @@ function pct(n)          { return `${fmt(n * 100, 1)}%`; }
 function sign(n)         { return n >= 0 ? '+' : '-'; }
 function esc(t)          { return String(t || '').replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&'); }
 
+/** Escaped full string for titles \\(no mid\\-word truncation\\). */
+function escFull(s) {
+  return esc(String(s ?? ''));
+}
+
+/** MarkdownV2\\-safe UTC timestamp for chat */
+function escDateUtc(d) {
+  if (!d) return '…';
+  const x = d instanceof Date ? d : new Date(d);
+  if (isNaN(x.getTime())) return '…';
+  return esc(x.toISOString().slice(0, 16).replace('T', ' ') + ' UTC');
+}
+
+function daysLeftFromClose(closeTime) {
+  if (!closeTime) return null;
+  const ms = closeTime instanceof Date ? closeTime.getTime() : new Date(closeTime).getTime();
+  if (isNaN(ms)) return null;
+  return Math.max(0, Math.round((ms - Date.now()) / 86_400_000));
+}
+
+/**
+ * One line: end time \\+ days left \\+ optional volume \\(for opportunities / markets lists\\).
+ * @param {{ closeTime?: Date|string, daysLeft?: number, volumeUsd?: number }} m
+ */
+function eventTimingVolumeLine(m) {
+  if (!m) return '';
+  const parts = [];
+  if (m.closeTime) {
+    const d = m.closeTime instanceof Date ? m.closeTime : new Date(m.closeTime);
+    const dl = m.daysLeft != null ? m.daysLeft : daysLeftFromClose(d);
+    const dls = dl != null ? esc(String(dl)) : '…';
+    parts.push(`Ends \\~ ${escDateUtc(d)} \\(${dls}d left\\)`);
+  }
+  if (m.volumeUsd != null && Number.isFinite(Number(m.volumeUsd))) {
+    parts.push(`Vol: ${escUsd(Number(m.volumeUsd))}`);
+  }
+  return parts.join(' \\| ');
+}
+
+/** Crowd\\-implied probability your side wins \\(buy price of that outcome token\\). */
+function crowdImpliedSideWinPct(side, marketSnap) {
+  if (!marketSnap) return null;
+  const p = side === 'YES' ? marketSnap.yesPrice : marketSnap.noPrice;
+  if (p == null || !Number.isFinite(p)) return null;
+  return escPct(p);
+}
+/** MarkdownV2: numbers/currency from fmt/usd/pct contain `.` — must be escaped outside esc(text). */
+function escFmt(n, d = 2) { return esc(fmt(n, d)); }
+function escUsd(n)        { return esc(usd(n)); }
+function escPct(n)        { return esc(pct(n)); }
+
 // ─── Startup ──────────────────────────────────────────────────────────────────
 function startupMessage(balance) {
-  return `🌙 *Night Agent Online* ✅\n${DIV}\n💼 Balance: ${usd(balance)} USDC\n📊 Scanning: Crypto markets\n🧠 LLM: Gemini 2\\.0 Flash\n⚡ TA: Bollinger Bands \\+ MA \\+ RSI\n${DIV}\nType /help for commands`;
+  const cap = process.env.MAX_FOCUS_EVENTS || '2';
+  return `*Night Agent online*\n${DIV}\nBalance: ${escUsd(balance)} USDC\nScanning crypto markets \\(focus: up to ${esc(String(cap))} pending \\+ open\\)\nAsk: /status or ask when the event ends, volume, or win probability\nModel: Gemini Flash Lite \\| TA: EWMA vol \\+ BS \\+ momentum\n${DIV}\n/help for commands`;
+}
+
+function manualExitMinUnrealized() {
+  const v = parseFloat(process.env.MANUAL_EXIT_MIN_UNREALIZED);
+  return Number.isFinite(v) && v >= 0 ? v : 0.01;
+}
+
+/** Offer manual exit when unrealized is clearly not flat \\(partial profit or loss\\). */
+function shouldOfferManualExit(unrealizedUsd) {
+  return Math.abs(unrealizedUsd) >= manualExitMinUnrealized();
+}
+
+/** One row: full \\+ half for /positions or price ticks \\(index 1\\-based for label\\). */
+function manualExitKeyboardRow(positionId, index1based) {
+  const tag = index1based != null ? ` #${index1based}` : '';
+  return [
+    { text: `Exit${tag} full`, callback_data: `manual_exit:${positionId}:full` },
+    { text: `Half${tag}`, callback_data: `manual_exit:${positionId}:half` },
+  ];
 }
 
 // ─── Help ─────────────────────────────────────────────────────────────────────
 function helpMessage() {
-  return `🌙 *Night Agent — Commands*\n${DIV}\n/balance — wallet balance & PnL\n/positions — open positions\n/history — last 10 closed positions\n/stats — performance stats\n/markets — show available crypto markets\n/scan — trigger a fresh scan now\n/pause — pause scanning\n/resume — resume scanning\n/ping — health check\n${DIV}\n*Natural language:*\n• "show markets"\n• "should I bet on BTC 100k?"\n• "analyse Rory McIlroy"\n• "my balance" / "open positions"\n${DIV}\n*Alerts:* tap ✅ BET or ❌ SKIP\n*Exit alerts:* tap 💰 EXIT or ⏳ HOLD`;
+  return `*Night Agent — commands*\n${DIV}\n/balance — wallet balance \\& PnL\n/positions — open positions \\(live end time \\& vol; exit buttons when partially up/down\\)\n/status — snapshot of open bets\n/history — last 10 closed positions\n/stats — performance stats\n/markets — available crypto markets\n/scan — run scan now\n/more — extra opportunities\n/pause — pause scanning\n/resume — resume scanning\n/ping — health check\n${DIV}\n*Focus mode:* up to *2* pending opportunities \\+ open bets\\. Auto\\-scan waits at the cap\\.\n${DIV}\n*Chat about your bets:*\n• when does this event end \\| what is the volume\n• chances of winning \\| current status\n• status of my bet \\| model win percent\n• how to add size\n${DIV}\n*Natural language:* show markets, more opportunities, should I bet on \\.\\.\\., balance, open positions\n${DIV}\n*Alerts:* BET \\/ SKIP; exit: EXIT \\/ HOLD; manual exit on /positions or /status when unrealized PnL meets threshold`;
 }
 
 // ─── Balance ──────────────────────────────────────────────────────────────────
 function balanceMessage(stats) {
-  return `💼 *Paper Wallet*\n${DIV}\nBalance: ${usd(stats.balance)} USDC\nTotal PnL: ${sign(stats.totalPnl)}${usd(stats.totalPnl)} \\(${stats.roi >= 0 ? '\\+' : ''}${stats.roi}% ROI\\)\nOpen: ${stats.openCount} \\| Closed: ${stats.closedCount}\nWins: ${stats.wonCount} \\| Losses: ${stats.lostCount}`;
+  return `*Paper wallet*\n${DIV}\nBalance: ${escUsd(stats.balance)} USDC\nTotal PnL: ${esc(sign(stats.totalPnl) + usd(stats.totalPnl))} \\(${stats.roi >= 0 ? '\\+' : ''}${esc(String(stats.roi))}% ROI\\)\nOpen: ${stats.openCount} \\| Closed: ${stats.closedCount}\nWins: ${stats.wonCount} \\| Losses: ${stats.lostCount}`;
 }
 
 // ─── Positions ────────────────────────────────────────────────────────────────
 function positionsMessage(positions) {
-  if (positions.length === 0) return '📭 No open positions\\.';
+  if (positions.length === 0) return 'No open positions\\.';
   const lines = positions.map((p, i) => {
     const unreal = p.contracts * (p.currentPrice ?? p.entryPrice) - p.totalCost;
-    return `${i + 1}\\. *${p.side}* ${esc(p.marketQuestion.slice(0, 50))}\n   Entry: ${fmt(p.entryPrice * 100, 1)}¢ → Now: ${fmt((p.currentPrice ?? p.entryPrice) * 100, 1)}¢\n   Unrealised: ${sign(unreal)}${usd(unreal)} \\| ${p.contracts} contracts`;
+    const title  = p.eventTitle && p.outcomeTitle && p.eventTitle !== p.outcomeTitle
+      ? `${escFull(p.eventTitle)} -> ${escFull(p.outcomeTitle)}`
+      : escFull(p.marketQuestion);
+    const endLn = p.closeTime
+      ? `\n   ${eventTimingVolumeLine({ closeTime: p.closeTime, volumeUsd: p.volumeUsdAtEntry })}`
+      : '';
+    return `${i + 1}\\. *${p.side}*\n   ${title}\n   Entry: ${escFmt(p.entryPrice * 100, 1)}¢ -> Now: ${escFmt((p.currentPrice ?? p.entryPrice) * 100, 1)}¢\n   Unrealised: ${esc(sign(unreal) + usd(unreal))} \\| ${p.contracts} contracts${endLn}`;
   });
-  return `📊 *Open Positions \\(${positions.length}\\)*\n${DIV}\n${lines.join('\n\n')}`;
+  return `*Open positions \\(${positions.length}\\)*\n${DIV}\n${lines.join('\n\n')}`;
 }
 
 // ─── History ──────────────────────────────────────────────────────────────────
 function historyMessage(closed) {
-  if (closed.length === 0) return '📭 No closed positions yet\\.';
+  if (closed.length === 0) return 'No closed positions yet\\.';
   const lines = closed.slice(-10).map((p, i) =>
-    `${i + 1}\\. *${p.side}* ${esc(p.marketQuestion.slice(0, 45))}\n   ${sign(p.pnl)}${usd(p.pnl)} \\| ${esc(p.exitReason)} \\| ${new Date(p.closedAt).toLocaleDateString()}`
+    `${i + 1}\\. *${p.side}* ${escFull(p.marketQuestion)}\n   ${esc(sign(p.pnl) + usd(p.pnl))} \\| ${esc(p.exitReason)} \\| ${esc(new Date(p.closedAt).toLocaleDateString())}`
   );
   const total = closed.reduce((s, p) => s + (p.pnl || 0), 0);
-  return `📋 *Closed Positions \\(last 10 of ${closed.length}\\)*\n${DIV}\n${lines.join('\n\n')}\n${DIV}\n*Total PnL: ${sign(total)}${usd(total)}*`;
+  return `*Closed positions \\(last 10 of ${closed.length}\\)*\n${DIV}\n${lines.join('\n\n')}\n${DIV}\n*Total PnL: ${esc(sign(total) + usd(total))}*`;
 }
 
 // ─── Stats ────────────────────────────────────────────────────────────────────
 function statsMessage(stats) {
   const { brierGrade } = require('../math/brierScore');
-  return `📈 *Performance*\n${DIV}\nBalance: ${usd(stats.balance)} USDC\nPnL: ${sign(stats.totalPnl)}${usd(stats.totalPnl)} \\(${stats.roi}% ROI\\)\n\nTrades: ${stats.closedCount} closed\nWin rate: ${stats.winRate}%\nAvg edge: ${stats.avgEdge}%\nBrier: ${stats.brierScore !== null ? fmt(stats.brierScore, 4) : 'N/A'} ${esc(brierGrade(stats.brierScore))}`;
+  return `*Performance*\n${DIV}\nBalance: ${escUsd(stats.balance)} USDC\nPnL: ${esc(sign(stats.totalPnl) + usd(stats.totalPnl))} \\(${esc(String(stats.roi))}% ROI\\)\n\nTrades: ${stats.closedCount} closed\nWin rate: ${esc(String(stats.winRate))}%\nAvg edge: ${esc(String(stats.avgEdge))}%\nBrier: ${stats.brierScore !== null ? escFmt(stats.brierScore, 4) : 'N/A'} ${esc(brierGrade(stats.brierScore))}`;
 }
 
 // ─── Markets list ─────────────────────────────────────────────────────────────
 function marketsMessage(markets) {
-  if (!markets || markets.length === 0) return '📭 No crypto markets available right now\\.';
+  if (!markets || markets.length === 0) return 'No crypto markets available right now\\.';
   const lines = markets.slice(0, 15).map((m, i) => {
-    const yPct = fmt(m.yesPrice * 100, 1);
-    const vol  = m.volumeUsd > 0 ? `$${m.volumeUsd.toFixed(2)}` : '$0';
-    return `${i + 1}\\. ${esc(m.question.slice(0, 55))}\n   YES: *${yPct}¢* \\| Vol: ${vol} \\| ${m.daysLeft}d left`;
+    const yPct = esc(fmt(m.yesPrice * 100, 1));
+    const vol  = m.volumeUsd > 0 ? esc(`$${m.volumeUsd.toFixed(2)}`) : '$0';
+    const endBit = m.closeTime
+      ? ` \\| ${escDateUtc(m.closeTime)} \\(${esc(String(m.daysLeft ?? daysLeftFromClose(m.closeTime)))}d\\)`
+      : ` \\| ${esc(String(m.daysLeft ?? '…'))}d left`;
+    const stats = `\n   YES: *${yPct}¢* \\| Vol: ${vol}${endBit}`;
+    const ev    = (m.eventTitle || '').trim();
+    const out   = (m.outcomeTitle || '').trim();
+    const hint  = (m.contextHint || '').trim();
+    const n     = i + 1;
+
+    if (ev && out && ev !== out) {
+      let block = `${n}\\. *Event:* ${esc(ev)}\n   *Outcome:* ${esc(out)}`;
+      if (hint.length > 0) {
+        block += `\n   ${escFull(hint)}`;
+      }
+      return block + stats;
+    }
+
+    const q = (m.question || [ev, out].filter(Boolean).join(' — ')).trim();
+    if (q.length > 0) {
+      return `${n}\\. ${escFull(q)}${stats}`;
+    }
+    return `${n}\\. _\\(no title from API\\)_${stats}`;
   });
-  return `🔍 *Available Crypto Markets \\(${markets.length} found\\)*\n${DIV}\n${lines.join('\n\n')}\n${DIV}\n_Scanning these every ${process.env.SCAN_INTERVAL_MINUTES || 5} min for edge_`;
+  return `*Available crypto markets \\(${markets.length}\\)*\n${DIV}\n${lines.join('\n\n')}\n${DIV}\n_Scan interval ${process.env.SCAN_INTERVAL_MINUTES || 5} min_`;
+}
+
+/** Event + outcome lines for bets \\(MarkdownV2\\). */
+function formatBetTargetHeader(market) {
+  const ev  = (market.eventTitle || '').trim();
+  const out = (market.outcomeTitle || '').trim();
+  if (ev && out && ev !== out) {
+    return `*Event:* ${esc(ev)}\n*Outcome \\(bet\\):* ${esc(out)}`;
+  }
+  const q = (market.question || market.marketQuestion || '').trim();
+  return `*Market:* ${esc(q)}`;
 }
 
 // ─── Opportunity ──────────────────────────────────────────────────────────────
@@ -66,30 +175,155 @@ function opportunityMessage(market, analysis, kelly) {
   const edge = analysis.probability - market.yesPrice;
   const ev   = (analysis.probability * (1 - market.yesPrice)) - ((1 - analysis.probability) * market.yesPrice);
 
-  return `🎯 *NEW OPPORTUNITY*\n${DIV}\n📌 ${esc(market.question)}\n⏰ ${market.daysLeft} days \\| Vol: $${fmt(market.volumeUsd, 2)}\n${DIV}\n📊 Market price:  *${fmt(market.yesPrice * 100, 1)}¢* \\(crowd: ${pct(market.yesPrice)}\\)\n🤖 My estimate:   *${pct(analysis.probability)}* chance\n📈 Edge:          *\\+${pct(edge)}*\n💡 EV per $1:     \\+${fmt(ev, 3)}\n📊 Confidence:    ${esc(analysis.confidence.toUpperCase())}\n${DIV}\n📰 _${esc(analysis.reasoning)}_\n${DIV}\n💵 Full bet: *${usd(betAmount)}* \\(${contracts} contracts @ ${fmt(entryPrice * 100, 1)}¢\\)\n💵 Half bet: *${usd(halfBetAmount)}* \\(${halfContracts} contracts\\)`;
+  const sideHint = analysis.side
+    ? `*Side:* ${esc(analysis.side)} \\(entry \\~ ${escFmt(entryPrice * 100, 1)}¢\\)\n`
+    : '';
+  const timing = eventTimingVolumeLine(market);
+  return `*New opportunity*\n${DIV}\n${formatBetTargetHeader(market)}\n${sideHint}${timing ? `${timing}\n` : ''}${DIV}\nYES token: *${escFmt(market.yesPrice * 100, 1)}¢* \\(crowd ${escPct(market.yesPrice)}\\)\nModel P\\(YES\\): *${escPct(analysis.probability)}*\nEdge vs crowd: *\\+${escPct(edge)}*\nEV per \\$1: \\+${escFmt(ev, 3)}\nConfidence: ${esc(analysis.confidence.toUpperCase())}\n${DIV}\n_${esc(analysis.reasoning)}_\n${DIV}\nFull bet: *${escUsd(betAmount)}* \\(${contracts} contracts @ ${escFmt(entryPrice * 100, 1)}¢\\)\nHalf bet: *${escUsd(halfBetAmount)}* \\(${halfContracts} contracts\\)`;
+}
+
+// ─── Open position price tick \\(focus tracking\\) ─────────────────────────────
+function noOpenPositionsInsightMessage() {
+  return 'No open bets\\. Use an opportunity alert or /scan\\.';
+}
+
+/**
+ * Chat reply: live snapshot of one open position \\(optional fresh LLM estimate\\).
+ * @param {object|null} marketSnap — from fetchMarket\\(\\) or null
+ * @param {{ probability, confidence, reasoning }|null} freshEstimate
+ * @param {{ addMoreHint?: boolean }} [opts]
+ */
+function positionInsightMessage(position, marketSnap, freshEstimate, opts = {}) {
+  const { addMoreHint = false } = opts;
+  const header = formatBetTargetHeader(position);
+  const side   = position.side;
+  const curPrice = marketSnap
+    ? (side === 'YES' ? marketSnap.yesPrice : marketSnap.noPrice)
+    : (position.currentPrice ?? position.entryPrice);
+  const unrealized = (position.contracts * curPrice) - position.totalCost;
+  const crowdYes = marketSnap ? escFmt(marketSnap.yesPrice * 100, 1) : '…';
+
+  const closeForLine = marketSnap
+    ? (marketSnap.closeTime || (position.closeTime ? new Date(position.closeTime) : null))
+    : (position.closeTime ? new Date(position.closeTime) : null);
+  const volForLine = marketSnap ? marketSnap.volumeUsd : position.volumeUsdAtEntry;
+  const dlVal      = closeForLine ? daysLeftFromClose(closeForLine) : null;
+  const timingLine = (closeForLine || volForLine != null)
+    ? eventTimingVolumeLine({
+        closeTime: closeForLine || undefined,
+        daysLeft: dlVal,
+        volumeUsd: volForLine,
+      })
+    : '';
+
+  const crowdWin = crowdImpliedSideWinPct(side, marketSnap);
+  const st = marketSnap?.status ? esc(String(marketSnap.status).toUpperCase()) : null;
+
+  let body =
+    `*Position snapshot*\n${DIV}\n${header}\n` +
+    `*Side:* ${esc(side)}\n` +
+    `Entry: *${escFmt(position.entryPrice * 100, 1)}¢* -> now: *${escFmt(curPrice * 100, 1)}¢*\n`;
+  if (timingLine) {
+    body += `${timingLine}\n`;
+  }
+  if (st) {
+    body += `Market status: *${st}*\n`;
+  }
+  if (marketSnap) {
+    body += `YES token: *${crowdYes}c* \\(implied P\\(YES\\)\\)\n`;
+    if (crowdWin) {
+      body += `Crowd P\\(your side wins\\): *${crowdWin}*\n`;
+    }
+  } else {
+    body += `_Live fetch failed \\- using last price\\._\n`;
+  }
+  body +=
+    `Unrealized PnL: *${esc(sign(unrealized) + usd(unrealized))}*\n` +
+    `Model at entry \\(P YES\\): *${escPct(position.myEstimatedProbability)}*\n`;
+
+  if (shouldOfferManualExit(unrealized) && marketSnap) {
+    body += `\n_Use Exit buttons below to close at live price\\._`;
+  }
+
+  if (freshEstimate) {
+    const pYes = freshEstimate.probability;
+    const pSide = side === 'YES' ? pYes : 1 - pYes;
+    body +=
+      `${DIV}\n*Updated estimate*\n` +
+      `P\\(YES\\): *${escPct(pYes)}* \\| ${esc(String(freshEstimate.confidence).toUpperCase())}\n` +
+      `Your *${esc(side)}* win prob\\. \\~ *${escPct(pSide)}*\n` +
+      `_${esc(freshEstimate.reasoning)}_`;
+  }
+
+  if (addMoreHint) {
+    body += `\n${DIV}\n${addMoreBetHelpMessage()}`;
+  }
+  return body;
+}
+
+function addMoreBetHelpMessage() {
+  const maxO = esc(String(process.env.MAX_OPEN_POSITIONS || 10));
+  return (
+    `*Adding size*\n` +
+    `Bets are fixed at placement\\. For more exposure, use another alert or /scan if the market appears again\\. ` +
+    `Max open positions: *${maxO}*\\.`
+  );
+}
+
+function positionPriceTickMessage(position, currentPrice, unrealizedUsd) {
+  const header = position.eventTitle && position.outcomeTitle && position.eventTitle !== position.outcomeTitle
+    ? `*${esc(position.eventTitle)}*\n*${esc(position.outcomeTitle)}*`
+    : `*${esc(position.marketQuestion)}*`;
+  const side = position.side;
+  const nowC = escFmt(currentPrice * 100, 1);
+  const entC = escFmt(position.entryPrice * 100, 1);
+  const pnl  = unrealizedUsd >= 0 ? `\\+${escUsd(unrealizedUsd)}` : `\\-${escUsd(Math.abs(unrealizedUsd))}`;
+  let msg = `*Position update*\n${DIV}\n${header}\n${side} @ ${entC}¢ -> *${nowC}¢*\nUnrealized: *${pnl}*`;
+  if (position.closeTime) {
+    const tl = eventTimingVolumeLine({ closeTime: position.closeTime, volumeUsd: position.volumeUsdAtEntry });
+    if (tl) msg += `\n${tl}`;
+  }
+  if (shouldOfferManualExit(unrealizedUsd)) {
+    msg += `\n_Partial PnL: use buttons below to exit\\._`;
+  }
+  return msg;
 }
 
 // ─── Bet confirmed ────────────────────────────────────────────────────────────
 function betConfirmedMessage(position) {
-  return `✅ *Bet Placed \\(Paper\\)*\n${DIV}\n${position.side} on: _${esc(position.marketQuestion)}_\nContracts: ${position.contracts} @ ${fmt(position.entryPrice * 100, 1)}¢\nCost: ${usd(position.totalCost)}\nMax payout: ${usd(position.potentialPayout)}\nMax profit: \\+${usd(position.potentialProfit)}`;
+  const head = position.eventTitle && position.outcomeTitle && position.eventTitle !== position.outcomeTitle
+    ? `_${esc(position.eventTitle)}_\n_${esc(position.outcomeTitle)}_\n`
+    : `_${esc(position.marketQuestion)}_\n`;
+  const tv = eventTimingVolumeLine({
+    closeTime: position.closeTime,
+    volumeUsd: position.volumeUsdAtEntry,
+  });
+  const timing = tv ? `${tv}\n` : '';
+  return `*Bet placed \\(paper\\)*\n${DIV}\n${head}*${position.side}*\n${timing}Contracts: ${position.contracts} @ ${escFmt(position.entryPrice * 100, 1)}¢\nCost: ${escUsd(position.totalCost)}\nMax payout: ${escUsd(position.potentialPayout)}\nMax profit: \\+${escUsd(position.potentialProfit)}`;
 }
 
 // ─── Exit opportunity ─────────────────────────────────────────────────────────
 function exitOpportunityMessage(position, currentPrice, profit) {
   const diff = currentPrice - position.entryPrice;
-  return `🚀 *EXIT OPPORTUNITY — TAKE PROFIT*\n${DIV}\n📌 ${esc(position.marketQuestion)}\n📈 ${position.side} @ ${fmt(position.entryPrice * 100, 1)}¢ → now *${fmt(currentPrice * 100, 1)}¢* \\(\\+${fmt(diff * 100, 1)}¢\\)\n${DIV}\n💰 Exit now: *${sign(profit)}${usd(profit)}*\n🎯 If resolves: \\+${usd(position.potentialProfit)}`;
+  return `*Take profit \\- exit signal*\n${DIV}\n${formatBetTargetHeader(position)}\n${position.side} @ ${escFmt(position.entryPrice * 100, 1)}¢ -> *${escFmt(currentPrice * 100, 1)}¢* \\(\\+${escFmt(diff * 100, 1)}¢\\)\n${DIV}\nExit now: *${esc(sign(profit) + usd(profit))}*\nIf held to resolution: \\+${escUsd(position.potentialProfit)}`;
 }
 
 // ─── Stop loss ────────────────────────────────────────────────────────────────
 function stopLossMessage(position, currentPrice, loss) {
   const diff = position.entryPrice - currentPrice;
-  return `🛑 *STOP LOSS ALERT*\n${DIV}\n📌 ${esc(position.marketQuestion)}\n📉 ${position.side} @ ${fmt(position.entryPrice * 100, 1)}¢ → now *${fmt(currentPrice * 100, 1)}¢* \\(\\-${fmt(diff * 100, 1)}¢\\)\n💸 Current loss: *\\-${usd(loss)}*`;
+  return `*Stop loss alert*\n${DIV}\n${formatBetTargetHeader(position)}\n${position.side} @ ${escFmt(position.entryPrice * 100, 1)}¢ -> *${escFmt(currentPrice * 100, 1)}¢* \\(-${escFmt(diff * 100, 1)}¢\\)\nCurrent loss: *\\-${escUsd(loss)}*`;
 }
 
 // ─── Resolved ─────────────────────────────────────────────────────────────────
 function resolvedMessage(position, won) {
   const pnl = position.pnl || 0;
-  return `🏁 *Market Resolved*\n${DIV}\n_${esc(position.marketQuestion)}_\nYour bet: *${position.side}* — ${won ? '✅ WON' : '❌ LOST'}\nPnL: ${sign(pnl)}$${Math.abs(pnl).toFixed(2)}`;
+  return `*Resolution*\n${DIV}\n_${esc(position.marketQuestion)}_\nSide: *${position.side}* \\| Result: *${won ? 'WON' : 'LOST'}*\nPnL: ${esc(sign(pnl) + '$' + Math.abs(pnl).toFixed(2))}`;
+}
+
+/** Paper exit before resolution \\(manual / take\\-profit callback\\). */
+function manualExitClosedMessage(position) {
+  const pnl = position.pnl || 0;
+  return `*Position closed*\n${DIV}\n_${esc(position.marketQuestion)}_\n${position.side} \\| PnL: ${esc(sign(pnl) + '$' + Math.abs(pnl).toFixed(2))}`;
 }
 
 // ─── Daily summary ────────────────────────────────────────────────────────────
@@ -104,12 +338,19 @@ function dailySummaryMessage(walletModule) {
   const best = closedToday.length > 0
     ? closedToday.reduce((b, p) => p.pnl > (b?.pnl ?? -Infinity) ? p : b, null)
     : null;
-  return `📊 *DAILY SUMMARY — ${esc(new Date().toDateString())}*\n${DIV}\n💼 Balance: ${usd(stats.balance)} USDC\nTotal PnL: ${sign(stats.totalPnl)}${usd(stats.totalPnl)}\nROI: ${stats.roi >= 0 ? '\\+' : ''}${stats.roi}%\n${DIV}\nClosed today: ${closedToday.length}\n  ✅ Won: ${won.length} \\(\\+${usd(wonAmt)}\\)\n  ❌ Lost: ${lost.length} \\(\\-${usd(lostAmt)}\\)\n${DIV}\nWin rate: ${stats.winRate}%\nAvg edge: ${stats.avgEdge}%\nBrier: ${stats.brierScore !== null ? fmt(stats.brierScore, 4) : 'N/A'} ${esc(brierGrade(stats.brierScore))}${best ? `\n${DIV}\n🏆 Best: _${esc(best.marketQuestion.slice(0, 60))}_ \\(\\+${usd(best.pnl)}\\)` : ''}`;
+  return `*Daily summary — ${esc(new Date().toDateString())}*\n${DIV}\nBalance: ${escUsd(stats.balance)} USDC\nTotal PnL: ${esc(sign(stats.totalPnl) + usd(stats.totalPnl))}\nROI: ${stats.roi >= 0 ? '\\+' : ''}${esc(String(stats.roi))}%\n${DIV}\nClosed today: ${closedToday.length}\n  Won: ${won.length} \\(\\+${escUsd(wonAmt)}\\)\n  Lost: ${lost.length} \\(\\-${escUsd(lostAmt)}\\)\n${DIV}\nWin rate: ${esc(String(stats.winRate))}%\nAvg edge: ${esc(String(stats.avgEdge))}%\nBrier: ${stats.brierScore !== null ? escFmt(stats.brierScore, 4) : 'N/A'} ${esc(brierGrade(stats.brierScore))}${best ? `\n${DIV}\nBest: _${escFull(best.marketQuestion)}_ \\(\\+${escUsd(best.pnl)}\\)` : ''}`;
 }
 
 module.exports = {
+  DIV,
+  escFull,
   startupMessage, helpMessage, balanceMessage, positionsMessage,
   historyMessage, statsMessage, marketsMessage, opportunityMessage,
   betConfirmedMessage, exitOpportunityMessage, stopLossMessage,
-  resolvedMessage, dailySummaryMessage, esc, usd, fmt, sign,
+  resolvedMessage, manualExitClosedMessage, dailySummaryMessage,
+  noOpenPositionsInsightMessage, positionInsightMessage,
+  positionPriceTickMessage, formatBetTargetHeader,
+  manualExitMinUnrealized, shouldOfferManualExit, manualExitKeyboardRow,
+  addMoreBetHelpMessage, eventTimingVolumeLine, escDateUtc, daysLeftFromClose,
+  esc, escFmt, escUsd, escPct, usd, fmt, sign,
 };

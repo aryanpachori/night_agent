@@ -56,7 +56,22 @@ function getStats() {
 }
 
 // ─── Position operations ─────────────────────────────────────────────────────
-function openPosition({ marketId, marketQuestion, side, entryPrice, betAmount, myEstimatedProbability, edge, ev, kellyFraction, confidence }) {
+function openPosition({
+  marketId,
+  marketQuestion,
+  eventTitle,
+  outcomeTitle,
+  side,
+  entryPrice,
+  betAmount,
+  myEstimatedProbability,
+  edge,
+  ev,
+  kellyFraction,
+  confidence,
+  closeTime = null,
+  volumeUsd = null,
+}) {
   if (betAmount > wallet.balance) {
     throw new Error(`Insufficient balance: $${wallet.balance.toFixed(2)} < $${betAmount.toFixed(2)}`);
   }
@@ -72,6 +87,8 @@ function openPosition({ marketId, marketQuestion, side, entryPrice, betAmount, m
     id: uuidv4(),
     marketId,
     marketQuestion,
+    eventTitle:    eventTitle || '',
+    outcomeTitle:  outcomeTitle || '',
     side,
     contracts,
     entryPrice,
@@ -91,6 +108,9 @@ function openPosition({ marketId, marketQuestion, side, entryPrice, betAmount, m
     pnl: null,
     exitReason: null,
     lastAlertAt: null,
+    /** ISO string — market resolution time from Jupiter when bet was placed */
+    closeTime:   closeTime ? (closeTime instanceof Date ? closeTime.toISOString() : String(closeTime)) : null,
+    volumeUsdAtEntry: volumeUsd != null && Number.isFinite(Number(volumeUsd)) ? Number(volumeUsd) : null,
   };
 
   wallet.balance -= actualCost;

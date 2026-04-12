@@ -169,17 +169,17 @@ function analyzeMarket(history, timeRemainingSeconds = 86_400) {
   lines.push(`  Mean reversion:     ${(reversion * 100).toFixed(3)}% (2-min SMA deviation)`);
   lines.push(`  Math probability:   ${(mathProbability * 100).toFixed(1)}% (logit-fused)`);
   if (vol) {
-    lines.push(`  Volume:             $${vol.current.toFixed(0)} (${vol.ratio.toFixed(1)}x avg${vol.spike ? ' — SPIKE ⚠️' : ''})`);
+    lines.push(`  Volume:             $${vol.current.toFixed(0)} (${vol.ratio.toFixed(1)}x avg${vol.spike ? ' [spike]' : ''})`);
   }
   const gap = mathProbability - current;
   if (signals.bsMispriced) {
-    lines.push(`  ⚠️  Math says ${gap > 0 ? 'UNDERVALUED' : 'OVERVALUED'} vs crowd (gap: ${gap > 0 ? '+' : ''}${(gap * 100).toFixed(1)}%)`);
+    lines.push(`  Note: Math vs crowd ${gap > 0 ? 'undervalued' : 'overvalued'} (gap: ${gap > 0 ? '+' : ''}${(gap * 100).toFixed(1)}%)`);
   }
   if (signals.strongMomentum) {
-    lines.push(`  ⚠️  ${momentum > 0 ? 'Bullish' : 'Bearish'} momentum: ${(momentum * 100).toFixed(2)}%`);
+    lines.push(`  Note: ${momentum > 0 ? 'Bullish' : 'Bearish'} momentum ${(momentum * 100).toFixed(2)}%`);
   }
   if (signals.meanReverting) {
-    lines.push(`  ⚠️  Mean reversion: price ${reversion < 0 ? 'above' : 'below'} 2-min average`);
+    lines.push(`  Note: Mean reversion — price ${reversion < 0 ? 'above' : 'below'} 2-min average`);
   }
 
   return {

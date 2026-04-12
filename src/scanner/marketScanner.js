@@ -20,6 +20,44 @@ function jupClient() {
 function toDecimal(native) { return native / NATIVE_UNIT; }
 function toNative(decimal)  { return Math.round(decimal * NATIVE_UNIT); }
 
+/** Jupiter payloads vary; pull the widest event label we can. */
+function pickEventTitle(event) {
+  const t =
+    event.title ??
+    event.name ??
+    event.eventTitle ??
+    event.question ??
+    event.summary ??
+    event.slug?.replace(/[-_]/g, ' ') ??
+    '';
+  return String(t).trim();
+}
+
+/** Outcome row label (often short: "1.40", "Up", ">$800M"). */
+function pickOutcomeTitle(market) {
+  const t =
+    market.title ??
+    market.outcome ??
+    market.outcomeTitle ??
+    market.shortTitle ??
+    market.name ??
+    '';
+  return String(t).trim();
+}
+
+/** Rules / description so cryptic outcomes are still understandable in lists. */
+function pickContextHint(event, market) {
+  const raw =
+    (market.rulesPrimary ??
+      market.rules ??
+      market.description ??
+      event.description ??
+      event.rulesPrimary ??
+      event.rules ??
+      '') + '';
+  return raw.trim();
+}
+
 function normaliseMarket(event, market, now) {
   const pricing = market.pricing || {};
   const yesPrice  = toDecimal(pricing.buyYesPriceUsd ?? 0);
@@ -28,15 +66,29 @@ function normaliseMarket(event, market, now) {
   if (!closeTimeSec) return null;
   const closeMs  = closeTimeSec * 1000;
   if (isNaN(closeMs)) return null;
+  const et = pickEventTitle(event);
+  const mt = pickOutcomeTitle(market);
+  const contextHint = pickContextHint(event, market);
+
+  const question = (() => {
+    if (et && mt && et !== mt) return `${et} — ${mt}`;
+    if (et && mt && et === mt) return et;
+    if (et && !mt) return et;
+    if (!et && mt && contextHint) {
+      return `${contextHint} — ${mt}`;
+    }
+    if (mt) return mt;
+    if (contextHint) return contextHint;
+    return '';
+  })();
+
   return {
     id:          market.marketId ?? market.id,
     eventId:     event.eventId   ?? event.id,
-    question:    (() => {
-      const et = (event.title  ?? '').trim();
-      const mt = (market.title ?? '').trim();
-      if (et && mt && et !== mt) return `${et} — ${mt}`;
-      return et || mt || '';
-    })(),
+    eventTitle:  et,
+    outcomeTitle: mt,
+    contextHint,
+    question,
     description: market.rulesPrimary ?? '',
     category:    event.category  ?? 'crypto',
     subcategory: event.subcategory ?? '',

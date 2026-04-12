@@ -1,6 +1,15 @@
 'use strict';
 
-const { opportunityMessage, exitOpportunityMessage, stopLossMessage, dailySummaryMessage } = require('./messages');
+const {
+  opportunityMessage,
+  exitOpportunityMessage,
+  stopLossMessage,
+  dailySummaryMessage,
+  positionPriceTickMessage,
+  resolvedMessage,
+  shouldOfferManualExit,
+  manualExitKeyboardRow,
+} = require('./messages');
 const wallet = require('../wallet/paperWallet');
 
 let _bot = null;
@@ -31,6 +40,10 @@ function getPendingOpportunity(marketId) {
   return pendingOpportunities.get(marketId) ?? null;
 }
 
+function getPendingOpportunityCount() {
+  return pendingOpportunities.size;
+}
+
 // ─── Pending exit state ───────────────────────────────────────────────────────
 const pendingExits = new Map();
 
@@ -58,10 +71,10 @@ async function sendOpportunityAlert(market, analysis, kellyFraction, betAmount, 
   const reply_markup = {
     inline_keyboard: [
       [
-        { text: `✅ BET ${analysis.side} (full $${betAmount.toFixed(0)})`, callback_data: `bet:${market.id}:full` },
-        { text: `🔄 BET half ($${halfBetAmount.toFixed(0)})`,              callback_data: `bet:${market.id}:half` },
+        { text: `BET ${analysis.side} full $${betAmount.toFixed(0)}`, callback_data: `bet:${market.id}:full` },
+        { text: `BET half $${halfBetAmount.toFixed(0)}`, callback_data: `bet:${market.id}:half` },
       ],
-      [{ text: '❌ SKIP', callback_data: `bet:${market.id}:skip` }],
+      [{ text: 'SKIP', callback_data: `bet:${market.id}:skip` }],
     ],
   };
 
@@ -89,10 +102,10 @@ async function sendExitAlert(position, currentPrice, profit) {
   const reply_markup = {
     inline_keyboard: [
       [
-        { text: `💰 EXIT NOW ${profit >= 0 ? '+' : ''}$${Math.abs(profit).toFixed(2)}`, callback_data: `exit:${position.id}:full` },
-        { text: '📊 EXIT HALF', callback_data: `exit:${position.id}:half` },
+        { text: `EXIT full ${profit >= 0 ? '+' : ''}$${Math.abs(profit).toFixed(2)}`, callback_data: `exit:${position.id}:full` },
+        { text: 'EXIT half', callback_data: `exit:${position.id}:half` },
       ],
-      [{ text: '⏳ HOLD', callback_data: `exit:${position.id}:hold` }],
+      [{ text: 'HOLD', callback_data: `exit:${position.id}:hold` }],
     ],
   };
   setPendingExit(position.id, { position, currentPrice, profit, expiresAt: Date.now() + 10 * 60 * 1000 });
@@ -105,8 +118,8 @@ async function sendStopLossAlert(position, currentPrice, loss) {
   const reply_markup = {
     inline_keyboard: [
       [
-        { text: `🛑 EXIT NOW -$${loss.toFixed(2)}`, callback_data: `exit:${position.id}:full` },
-        { text: '⏳ HOLD ANYWAY',                   callback_data: `exit:${position.id}:hold` },
+        { text: `EXIT now -$${loss.toFixed(2)}`, callback_data: `exit:${position.id}:full` },
+        { text: 'HOLD', callback_data: `exit:${position.id}:hold` },
       ],
     ],
   };
@@ -117,6 +130,19 @@ async function sendStopLossAlert(position, currentPrice, loss) {
 // ─── sendDailySummary ─────────────────────────────────────────────────────────
 async function sendDailySummary(walletModule) {
   await send(dailySummaryMessage(walletModule));
+}
+
+async function sendPositionPriceTick(position, currentPrice, unrealizedUsd) {
+  const text = positionPriceTickMessage(position, currentPrice, unrealizedUsd);
+  const extra = {};
+  if (shouldOfferManualExit(unrealizedUsd)) {
+    extra.reply_markup = { inline_keyboard: [manualExitKeyboardRow(position.id, null)] };
+  }
+  return send(text, extra);
+}
+
+async function sendResolvedAlert(position, won) {
+  return send(resolvedMessage(position, won));
 }
 
 // ─── sendRawMessage ───────────────────────────────────────────────────────────
@@ -132,8 +158,11 @@ module.exports = {
   sendExitAlert,
   sendStopLossAlert,
   sendDailySummary,
+  sendPositionPriceTick,
+  sendResolvedAlert,
   sendRawMessage,
   getPendingOpportunity,
+  getPendingOpportunityCount,
   getPendingExit,
   pendingOpportunities,
   pendingExits,

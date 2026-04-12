@@ -4,6 +4,64 @@ const { getMarketTokenPrice, parseTargetFromQuestion } = require('../price/token
 const { getPriceHistory } = require('../price/priceHistory');
 const { analyzeMarket, fuseProbability } = require('../price/technicalAnalysis');
 
+// ─── Gemini free-tier friendly pacing ─────────────────────────────────────────
+// Free tier is tight (e.g. ~5 RPM, ~20 RPD on 2.5 Flash). Space calls + retry 429s.
+let _geminiThrottleChain = Promise.resolve();
+let _lastGeminiCallAt    = 0;
+
+function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+function geminiMinIntervalMs() {
+  const v = parseInt(process.env.GEMINI_MIN_INTERVAL_MS, 10);
+  return Number.isFinite(v) && v >= 0 ? v : 13_000;
+}
+
+function geminiMaxRetries() {
+  const v = parseInt(process.env.GEMINI_MAX_RETRIES, 10);
+  return Number.isFinite(v) && v >= 1 ? Math.min(v, 8) : 3;
+}
+
+async function throttleGeminiCall() {
+  const minGap = geminiMinIntervalMs();
+  _geminiThrottleChain = _geminiThrottleChain.then(async () => {
+    const elapsed = Date.now() - _lastGeminiCallAt;
+    const wait    = Math.max(0, minGap - elapsed);
+    if (wait > 0) await sleep(wait);
+    _lastGeminiCallAt = Date.now();
+  });
+  return _geminiThrottleChain;
+}
+
+function isGeminiRateLimitError(err) {
+  const msg = String(err?.message || err || '');
+  const code = err?.status ?? err?.statusCode ?? err?.code;
+  return code === 429 || /429|RESOURCE_EXHAUSTED|quota|rate.?limit|too many requests/i.test(msg);
+}
+
+/** Google often embeds `Please retry in 56.7s` in the error body — wait at least that long before retry. */
+function parseGeminiRetryAfterMs(err) {
+  const msg = String(err?.message || '');
+  const m   = /Please retry in ([\d.]+)\s*s/i.exec(msg);
+  if (!m) return 0;
+  const ms = Math.ceil(parseFloat(m[1], 10) * 1000);
+  return Number.isFinite(ms) && ms > 0 && ms < 300_000 ? ms : 0;
+}
+
+let _warnedGeminiModel = false;
+function warnIfLegacyGeminiModel() {
+  const id = process.env.GEMINI_MODEL || '';
+  if (_warnedGeminiModel || !id) return;
+  if (/gemini-1\.5|gemini-2\.0-flash/i.test(id)) {
+    _warnedGeminiModel = true;
+    console.warn(
+      `[llm] GEMINI_MODEL=${id} — older SKUs often show "limit: 0" or vanishing free quota in the API. ` +
+        'Switch to gemini-3.1-flash-lite-preview or gemini-2.5-flash-lite (see .env.example).',
+    );
+  }
+}
+
 let genAI = null;
 function getGemini() {
   if (!genAI) {
@@ -93,8 +151,12 @@ function parseResponse(raw) {
 }
 
 async function estimateWithGemini(market, tokenData, taData) {
-  const ai    = getGemini();
-  const model = ai.getGenerativeModel({ model: process.env.GEMINI_MODEL || 'gemini-2.0-flash-lite' });
+  warnIfLegacyGeminiModel();
+  await throttleGeminiCall();
+
+  const ai = getGemini();
+  // Default: 3.1 Flash Lite preview — higher RPD on free tier than 2.5 Flash family; avoid gemini-2.0-* (often limit:0).
+  const model = ai.getGenerativeModel({ model: process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite-preview' });
   const prompt = `${SYSTEM_PROMPT}\n\n${buildPrompt(market, tokenData, taData)}`;
 
   console.log(`\n${'─'.repeat(60)}`);
@@ -103,19 +165,53 @@ async function estimateWithGemini(market, tokenData, taData) {
   console.log(prompt);
   console.log(`${'─'.repeat(60)}`);
 
-  const result  = await model.generateContent(prompt);
-  const rawText = result.response.text();
+  const maxAttempts = geminiMaxRetries();
+  let lastErr;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const result  = await model.generateContent(prompt);
+      const rawText = result.response.text();
 
-  console.log(`[llm:gemini] RAW RESPONSE:`);
-  console.log(rawText);
+      console.log(`[llm:gemini] RAW RESPONSE:`);
+      console.log(rawText);
 
-  const parsed = parseResponse(rawText);
-  console.log(`[llm:gemini] PARSED: prob=${(parsed.probability*100).toFixed(1)}% confidence=${parsed.confidence}`);
-  console.log(`[llm:gemini] REASONING: ${parsed.reasoning}`);
-  console.log(`[llm:gemini] KEY FACTORS: ${parsed.keyFactors.join(' | ')}`);
-  console.log(`${'─'.repeat(60)}\n`);
+      const parsed = parseResponse(rawText);
+      console.log(`[llm:gemini] PARSED: prob=${(parsed.probability * 100).toFixed(1)}% confidence=${parsed.confidence}`);
+      console.log(`[llm:gemini] REASONING: ${parsed.reasoning}`);
+      console.log(`[llm:gemini] KEY FACTORS: ${parsed.keyFactors.join(' | ')}`);
+      console.log(`${'─'.repeat(60)}\n`);
 
-  return parsed;
+      return parsed;
+    } catch (err) {
+      lastErr = err;
+      if (isGeminiRateLimitError(err) && attempt < maxAttempts) {
+        const suggested = parseGeminiRetryAfterMs(err);
+        const backoff   = Math.max(suggested, Math.min(120_000, 8_000 * 2 ** (attempt - 1)));
+        console.warn(
+          `[llm:gemini] Rate limited (attempt ${attempt}/${maxAttempts}) — waiting ${(backoff / 1000).toFixed(1)}s` +
+            (suggested ? ' (from API RetryInfo)' : '') +
+            `. ${err.message.slice(0, 200)}`,
+        );
+        await sleep(backoff);
+        await throttleGeminiCall();
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr;
+}
+
+/** When Gemini is unavailable and there is no OpenAI key: neutral LLM prob so post-step fusion ≈ math. */
+function mathOnlyLlmFallback(market, err) {
+  const hint = err?.message ? String(err.message).slice(0, 120) : 'unknown error';
+  console.warn(`[llm] Gemini unavailable — math-only path (crowd baseline). Cause: ${hint}`);
+  return {
+    probability: market.yesPrice,
+    confidence:  'low',
+    reasoning:   'LLM unavailable (quota/rate limit or API error). Using technical model vs crowd.',
+    keyFactors:  ['math-fallback'],
+  };
 }
 
 async function estimateWithOpenAI(market, tokenData, taData) {
@@ -156,7 +252,12 @@ async function estimateWithOpenAI(market, tokenData, taData) {
 // Prevents re-calling Gemini for the same market within the cache window.
 // 5-min scans would otherwise call Gemini every cycle for every qualifying market.
 const _llmCache = new Map(); // marketId → { result, expiresAt }
-const LLM_CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
+
+function llmCacheTtlMs() {
+  const mins = parseInt(process.env.LLM_CACHE_TTL_MINUTES, 10);
+  if (Number.isFinite(mins) && mins > 0) return mins * 60 * 1000;
+  return 90 * 60 * 1000; // 90 min default — fewer repeat calls on free Gemini RPD
+}
 
 async function estimateProbability(market) {
   const hasGemini = !!process.env.GEMINI_API_KEY;
@@ -166,7 +267,7 @@ async function estimateProbability(market) {
   // Cache check — skip Gemini entirely if we already have a fresh result
   const cached = _llmCache.get(market.id);
   if (cached && Date.now() < cached.expiresAt) {
-    console.log(`[llm] Cache hit "${market.question.slice(0, 40)}" — skipping Gemini (expires in ${Math.round((cached.expiresAt - Date.now()) / 60000)}min)`);
+    console.log(`[llm] Cache hit "${market.question.slice(0, 40)}" — skipping LLM (expires in ${Math.round((cached.expiresAt - Date.now()) / 60000)} min)`);
     return cached.result;
   }
 
@@ -202,11 +303,26 @@ async function estimateProbability(market) {
       llmResult = await estimateWithGemini(market, tokenData, taData);
     } catch (err) {
       console.warn(`[llm] Gemini failed: ${err.message}`);
-      if (!hasOpenAI) throw err;
+      if (hasOpenAI) {
+        /* fall through to OpenAI */
+      } else if (process.env.LLM_MATH_ONLY_FALLBACK === '0') {
+        throw err;
+      } else {
+        llmResult = mathOnlyLlmFallback(market, err);
+      }
+    }
+  }
+  if (!llmResult && hasOpenAI) {
+    try {
+      llmResult = await estimateWithOpenAI(market, tokenData, taData);
+    } catch (openErr) {
+      console.warn(`[llm] OpenAI failed: ${openErr.message}`);
+      if (process.env.LLM_MATH_ONLY_FALLBACK === '0') throw openErr;
+      llmResult = mathOnlyLlmFallback(market, openErr);
     }
   }
   if (!llmResult) {
-    llmResult = await estimateWithOpenAI(market, tokenData, taData);
+    throw new Error('No LLM produced a result (set OPENAI_API_KEY or enable math fallback)');
   }
 
   // 4. Fuse math probability with LLM in logit space
@@ -220,7 +336,7 @@ async function estimateProbability(market) {
   console.log(`[llm] Final: "${market.question.slice(0, 50)}" → ${(llmResult.probability * 100).toFixed(1)}% (${llmResult.confidence})`);
 
   // Store in cache so the next scan cycle skips Gemini for this market
-  _llmCache.set(market.id, { result: llmResult, expiresAt: Date.now() + LLM_CACHE_TTL_MS });
+  _llmCache.set(market.id, { result: llmResult, expiresAt: Date.now() + llmCacheTtlMs() });
 
   return llmResult;
 }

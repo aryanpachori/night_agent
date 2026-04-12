@@ -3,12 +3,18 @@
 const { fetchMarket } = require('../scanner/marketScanner');
 const { estimateProbability } = require('../llm/probabilityEstimator');
 const { recordOutcome } = require('../math/brierScore');
-const { sendExitAlert, sendStopLossAlert, sendRawMessage } = require('../telegram/alerts');
+const { sendExitAlert, sendStopLossAlert, sendPositionPriceTick } = require('../telegram/alerts');
 const wallet = require('../wallet/paperWallet');
 
 const TAKE_PROFIT_THRESHOLD = 0.15;   // +15¢
 const STOP_LOSS_THRESHOLD = 0.12;     // -12¢
-const MIN_PRICE_MOVE = 0.05;          // ignore < 5¢ moves
+const MIN_PRICE_MOVE = 0.05;          // ignore < 5¢ moves for TP/SL/LLM exit
+
+/** Price “heartbeat” alerts — move vs last tick, cooldown (separate from TP alerts). */
+const PRICE_TICK_MIN_MOVE = parseFloat(process.env.PRICE_TICK_MIN_MOVE) || 0.04;
+const PRICE_TICK_COOLDOWN_MS = (parseInt(process.env.PRICE_TICK_INTERVAL_MINUTES, 10) || 12) * 60 * 1000;
+
+const priceTickState = new Map(); // positionId → { lastAlertPrice, lastSentAt }
 
 /**
  * Called by cron every MONITOR_INTERVAL_MINUTES.
@@ -47,10 +53,13 @@ async function checkPosition(position) {
   const currentPrice = position.side === 'YES' ? market.yesPrice : market.noPrice;
   wallet.updatePositionPrice(position.id, currentPrice);
 
+  const unrealized = (position.contracts * currentPrice) - position.totalCost;
+  await maybeSendPriceTick(position, currentPrice, unrealized);
+
   const priceDiff = currentPrice - position.entryPrice;
   const absDiff = Math.abs(priceDiff);
 
-  // Skip if price barely moved
+  // Skip TP/SL/LLM path if price barely moved
   if (absDiff < MIN_PRICE_MOVE) return;
 
   // Debounce — don't alert same position twice within 2 hours
@@ -108,26 +117,50 @@ async function checkPosition(position) {
   }
 }
 
+/**
+ * Lightweight PnL update for focused positions (not the same as take\\-profit alerts).
+ */
+async function maybeSendPriceTick(position, currentPrice, unrealized) {
+  let st = priceTickState.get(position.id);
+  if (!st) {
+    st = { lastAlertPrice: position.entryPrice, lastSentAt: 0 };
+    priceTickState.set(position.id, st);
+  }
+  const now   = Date.now();
+  const moved = Math.abs(currentPrice - st.lastAlertPrice);
+
+  if (st.lastSentAt && now - st.lastSentAt < PRICE_TICK_COOLDOWN_MS && moved < PRICE_TICK_MIN_MOVE) return;
+
+  // First tick: need a clear move or 30m in the trade (avoid spam right after fill)
+  if (!st.lastSentAt) {
+    const sinceOpen = Date.now() - new Date(position.openedAt).getTime();
+    if (sinceOpen < 30 * 60 * 1000 && moved < PRICE_TICK_MIN_MOVE) return;
+  }
+
+  st.lastAlertPrice = currentPrice;
+  st.lastSentAt     = now;
+  try {
+    await sendPositionPriceTick(position, currentPrice, unrealized);
+  } catch (err) {
+    console.warn(`[monitor] Price tick send failed: ${err.message}`);
+  }
+}
+
 async function handleResolution(position, market) {
+  priceTickState.delete(position.id);
+
   const yesWon = market.result === 'yes';
   const ourSideWon = (position.side === 'YES' && yesWon) || (position.side === 'NO' && !yesWon);
   const closePrice = ourSideWon ? 1.0 : 0.0;
 
   try {
     const closed = wallet.closePosition(position.id, closePrice, 'resolved');
-    const pnl = closed.pnl;
-    const sign = pnl >= 0 ? '+' : '';
 
     // Update Brier score
     recordOutcome(position.myEstimatedProbability, yesWon ? 1 : 0);
 
-    await sendRawMessage(
-      `🏁 *Market Resolved*\n\n` +
-      `_${position.marketQuestion}_\n` +
-      `Result: *${market.result.toUpperCase()}*\n` +
-      `Your bet: *${position.side}* — ${ourSideWon ? '✅ WON' : '❌ LOST'}\n` +
-      `PnL: ${sign}$${Math.abs(pnl).toFixed(2)}`
-    );
+    const { sendResolvedAlert } = require('../telegram/alerts');
+    await sendResolvedAlert(closed, ourSideWon);
   } catch (err) {
     console.error(`[monitor] Resolution handling error: ${err.message}`);
   }

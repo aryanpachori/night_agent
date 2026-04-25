@@ -3,7 +3,7 @@
 const {
   opportunityMessage,
   exitOpportunityMessage,
-  stopLossMessage,
+  stopLossAutoClosedMessage,
   dailySummaryMessage,
   positionPriceTickMessage,
   resolvedMessage,
@@ -96,7 +96,7 @@ async function sendOpportunityAlert(market, analysis, kellyFraction, betAmount, 
   await send(text, { reply_markup });
 }
 
-// ─── sendExitAlert ────────────────────────────────────────────────────────────
+// ─── sendExitAlert — take profit / negative edge: manual buttons only (no auto\\-close on profit) ─
 async function sendExitAlert(position, currentPrice, profit) {
   const text = exitOpportunityMessage(position, currentPrice, profit);
   const reply_markup = {
@@ -112,19 +112,10 @@ async function sendExitAlert(position, currentPrice, profit) {
   await send(text, { reply_markup });
 }
 
-// ─── sendStopLossAlert ────────────────────────────────────────────────────────
-async function sendStopLossAlert(position, currentPrice, loss) {
-  const text = stopLossMessage(position, currentPrice, loss);
-  const reply_markup = {
-    inline_keyboard: [
-      [
-        { text: `EXIT now -$${loss.toFixed(2)}`, callback_data: `exit:${position.id}:full` },
-        { text: 'HOLD', callback_data: `exit:${position.id}:hold` },
-      ],
-    ],
-  };
-  setPendingExit(position.id, { position, currentPrice, profit: -loss, expiresAt: Date.now() + 10 * 60 * 1000 });
-  await send(text, { reply_markup });
+// ─── Stop loss: close is done in `positionMonitor`; this is Telegram follow\\-up only ─
+async function sendStopLossAutoClosedNotification(closed) {
+  const text = stopLossAutoClosedMessage(closed);
+  await send(text);
 }
 
 // ─── sendDailySummary ─────────────────────────────────────────────────────────
@@ -156,7 +147,7 @@ module.exports = {
   setBot,
   sendOpportunityAlert,
   sendExitAlert,
-  sendStopLossAlert,
+  sendStopLossAutoClosedNotification,
   sendDailySummary,
   sendPositionPriceTick,
   sendResolvedAlert,

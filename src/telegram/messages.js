@@ -381,16 +381,23 @@ function betConfirmedMessage(position) {
   return `*Bet placed \\(paper\\)*\n${DIV}\n${head}*${position.side}*\n${timing}Contracts: ${position.contracts} @ ${escFmt(position.entryPrice * 100, 1)}¢\nCost: ${escUsd(position.totalCost)}\nMax payout: ${escUsd(position.potentialPayout)}\nMax profit: \\+${escUsd(position.potentialProfit)}`;
 }
 
-// ─── Exit opportunity ─────────────────────────────────────────────────────────
+// ─── Exit opportunity (manual only; auto\\-close applies to stop\\-loss in monitor) ─
 function exitOpportunityMessage(position, currentPrice, profit) {
   const diff = currentPrice - position.entryPrice;
   return `*Take profit \\- exit signal*\n${DIV}\n${formatBetTargetHeader(position)}\n${position.side} @ ${escFmt(position.entryPrice * 100, 1)}¢ -> *${escFmt(currentPrice * 100, 1)}¢* \\(\\+${escFmt(diff * 100, 1)}¢\\)\n${DIV}\nExit now: *${esc(sign(profit) + usd(profit))}*\nIf held to resolution: \\+${escUsd(position.potentialProfit)}`;
 }
 
-// ─── Stop loss ────────────────────────────────────────────────────────────────
+// ─── Stop loss (legacy text if ever shown before auto\\-close) ───────────────
 function stopLossMessage(position, currentPrice, loss) {
   const diff = position.entryPrice - currentPrice;
   return `*Stop loss alert*\n${DIV}\n${formatBetTargetHeader(position)}\n${position.side} @ ${escFmt(position.entryPrice * 100, 1)}¢ -> *${escFmt(currentPrice * 100, 1)}¢* \\(-${escFmt(diff * 100, 1)}¢\\)\nCurrent loss: *\\-${escUsd(loss)}*`;
+}
+
+/** After automatic stop\\-loss exit \\(\\+ Telegram confirmation\\) */
+function stopLossAutoClosedMessage(closed) {
+  const pnl = closed.pnl || 0;
+  return `*Stop loss — exited automatically*\n${DIV}\n${positionCompactTitle(closed)}\n` +
+    `${esc(closed.side)} \\| PnL: *${esc(sign(pnl) + usd(pnl))}*\n_You were only notified; position is already closed\\._`;
 }
 
 // ─── Resolved ─────────────────────────────────────────────────────────────────
@@ -440,7 +447,7 @@ module.exports = {
   escFull,
   startupMessage, helpMessage, balanceMessage, positionsMessage,
   historyMessage, statsMessage, marketsMessage, marketsMessageChunks, opportunityMessage,
-  betConfirmedMessage, exitOpportunityMessage, stopLossMessage,
+  betConfirmedMessage, exitOpportunityMessage, stopLossMessage, stopLossAutoClosedMessage,
   resolvedMessage, manualExitClosedMessage, dailySummaryMessage,
   noOpenPositionsInsightMessage, positionInsightMessage,
   positionPriceTickMessage, formatBetTargetHeader,

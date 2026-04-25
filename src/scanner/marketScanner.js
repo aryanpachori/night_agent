@@ -1,5 +1,7 @@
 'use strict';
 
+let _warnedMinDaysLeftIgnored = false;
+
 const axios = require('axios');
 const { getPriceHistory, getPointCount } = require('../price/priceHistory');
 const { analyzeMarket } = require('../price/technicalAnalysis');
@@ -127,13 +129,8 @@ function normaliseMarket(event, market, now) {
 async function scanMarkets({ newOnly = false } = {}) {
   const MIN_PRICE      = parseFloat(process.env.MIN_PRICE)    || 0.15;
   const MAX_PRICE      = parseFloat(process.env.MAX_PRICE)    || 0.85;
-  // Default min "days" = 0 so 5m/15m/same-day markets qualify (Jupiter "live" is often very short)
-  const MIN_DAYS       = (() => {
-    const v = process.env.MIN_DAYS_LEFT;
-    if (v === undefined || v === '') return 0;
-    const n = parseInt(v, 10);
-    return Number.isFinite(n) ? n : 0;
-  })();
+  // Minimum time until close: use MIN_HOURS_LEFT / MIN_RESOLVE_MINUTES only (no day floor).
+  // For "at least ~1 day" set e.g. MIN_HOURS_LEFT=24 (or MIN_RESOLVE_MINUTES=1440).
   const MIN_HOURS = (() => {
     const v = process.env.MIN_HOURS_LEFT;
     if (v === undefined || v === '') return 0;
@@ -151,8 +148,18 @@ async function scanMarkets({ newOnly = false } = {}) {
   const TA_REQUIRED    = process.env.TA_REQUIRED !== 'false';  // default true
 
   const now      = Date.now();
-  const minEndMs =
-    now + MIN_DAYS * 86_400_000 + MIN_HOURS * 3_600_000 + MIN_RESOLVE_MINUTES * 60_000;
+  if (
+    !_warnedMinDaysLeftIgnored &&
+    process.env.MIN_DAYS_LEFT != null &&
+    String(process.env.MIN_DAYS_LEFT).trim() !== ''
+  ) {
+    _warnedMinDaysLeftIgnored = true;
+    console.warn(
+      '[scanner] MIN_DAYS_LEFT is ignored. Use MIN_HOURS_LEFT / MIN_RESOLVE_MINUTES (default 0). e.g. MIN_HOURS_LEFT=24 for ~1 day min.',
+    );
+  }
+
+  const minEndMs = now + MIN_HOURS * 3_600_000 + MIN_RESOLVE_MINUTES * 60_000;
   const maxEndMs = now + MAX_DAYS * 86_400_000;
 
   const client  = jupClient();

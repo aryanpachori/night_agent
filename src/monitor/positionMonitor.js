@@ -3,7 +3,7 @@
 const { fetchMarket } = require('../scanner/marketScanner');
 const { estimateProbability } = require('../llm/probabilityEstimator');
 const { recordOutcome } = require('../math/brierScore');
-const { sendExitAlert, sendStopLossAlert, sendPositionPriceTick } = require('../telegram/alerts');
+const { sendExitAlert, sendStopLossAutoClosedNotification, sendPositionPriceTick } = require('../telegram/alerts');
 const wallet = require('../wallet/paperWallet');
 
 const TAKE_PROFIT_THRESHOLD = 0.15;   // +15¢
@@ -92,12 +92,16 @@ async function checkPosition(position) {
     return;
   }
 
-  // Stop loss: price dropped >= 12¢
+  // Stop loss: price dropped >= 12¢ — close immediately, Telegram is notification only
   if (priceDiff <= -STOP_LOSS_THRESHOLD) {
-    console.log(`[monitor] Stop loss triggered for ${position.id} (-${(Math.abs(priceDiff) * 100).toFixed(1)}¢)`);
+    console.log(`[monitor] Stop loss — auto-exit ${position.id} (-${(Math.abs(priceDiff) * 100).toFixed(1)}¢)`);
     wallet.markPositionAlerted(position.id);
-    const loss = position.totalCost - (position.contracts * currentPrice);
-    await sendStopLossAlert(position, currentPrice, loss);
+    try {
+      const closed = wallet.closePosition(position.id, currentPrice, 'stop_loss');
+      await sendStopLossAutoClosedNotification(closed);
+    } catch (err) {
+      console.error(`[monitor] stop_loss close: ${err.message}`);
+    }
     return;
   }
 

@@ -274,19 +274,12 @@ function createBot() {
       const cur  = snap ? (p.side === 'YES' ? snap.yesPrice : snap.noPrice) : (p.currentPrice ?? p.entryPrice);
       if (snap) wallet.updatePositionPrice(p.id, cur);
       const unreal = p.contracts * cur - p.totalCost;
-      const title  = p.eventTitle && p.outcomeTitle && p.eventTitle !== p.outcomeTitle
-        ? `${msgs.escFull(p.eventTitle)} -> ${msgs.escFull(p.outcomeTitle)}`
-        : msgs.escFull(p.marketQuestion);
+      const title  = msgs.positionCompactTitle(p);
       const closeCt = snap?.closeTime ?? (p.closeTime ? new Date(p.closeTime) : null);
       const volV    = snap?.volumeUsd ?? p.volumeUsdAtEntry;
-      const timing  = (closeCt || volV != null)
-        ? `\n   ${msgs.eventTimingVolumeLine({
-            closeTime: closeCt || undefined,
-            daysLeft: closeCt ? msgs.daysLeftFromClose(closeCt) : null,
-            volumeUsd: volV,
-          })}`
-        : '';
-      return `${i + 1}\\. *${p.side}*\n   ${title}\n   Entry: ${msgs.escFmt(p.entryPrice * 100, 1)}¢ → Now: ${msgs.escFmt(cur * 100, 1)}¢\n   Unrealised: ${msgs.esc(msgs.sign(unreal) + msgs.usd(unreal))} \\| ${p.contracts} contracts${timing}`;
+      const volB    = volV != null && Number.isFinite(volV) ? ` \\| Vol: ${msgs.escUsd(volV)}` : '';
+      const endB    = closeCt ? ` \\| Ends: ${msgs.escDateUtc(closeCt)}` : '';
+      return `${i + 1}\\. *${p.side}* — ${title}\n   ${msgs.escFmt(p.entryPrice * 100, 1)}→${msgs.escFmt(cur * 100, 1)}¢ \\| U: ${msgs.esc(msgs.sign(unreal) + msgs.usd(unreal))} \\| ${p.contracts} ct${endB}${volB}`;
     });
 
     const fullText = `*Open positions \\(${positions.length}\\)*\n${msgs.DIV}\n${lines.join('\n\n')}`;
@@ -423,8 +416,8 @@ function createBot() {
       return;
     }
 
-    // ── Positions — same live list as /positions ──────────────────────────────
-    if (text.includes('position') || text.includes('open trade') || text.includes('my bet')) {
+    // ── Positions — same as /positions; `postions` has no "position" substring ─────
+    if (text.includes('position') || /\bpostions\b|\bpoistions\b/.test(text) || text.includes('open trade') || text.includes('my bet')) {
       await sendLivePositionsList(msg.chat.id);
       return;
     }

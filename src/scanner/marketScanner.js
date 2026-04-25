@@ -20,6 +20,16 @@ function jupClient() {
 function toDecimal(native) { return native / NATIVE_UNIT; }
 function toNative(decimal)  { return Math.round(decimal * NATIVE_UNIT); }
 
+/** Human-readable time left for logs (fast markets: minutes, not "0d"). */
+function formatTimeToResolveShort(seconds) {
+  const s = Number(seconds);
+  if (!Number.isFinite(s) || s < 0) return '?';
+  if (s < 120) return `${Math.max(1, Math.round(s))}s`;
+  if (s < 3600) return `${Math.round(s / 60)}m`;
+  if (s < 86_400) return `${(s / 3600).toFixed(1)}h`;
+  return `${(s / 86_400).toFixed(1)}d`;
+}
+
 /** Jupiter payloads vary; pull the widest event label we can. */
 function pickEventTitle(event) {
   const t =
@@ -82,6 +92,8 @@ function normaliseMarket(event, market, now) {
     return '';
   })();
 
+  const secondsToResolve = Math.max(0, (closeMs - now) / 1000);
+
   return {
     id:          market.marketId ?? market.id,
     eventId:     event.eventId   ?? event.id,
@@ -98,6 +110,8 @@ function normaliseMarket(event, market, now) {
     sellNoPrice:  toDecimal(pricing.sellNoPriceUsd   ?? 0),
     volumeUsd,
     daysLeft:    Math.round((closeMs - now) / 86_400_000),
+    /** Actual time to resolution in seconds (for 5m/15m/short-dated markets; daysLeft rounds to 0). */
+    secondsToResolve,
     closeTime:   new Date(closeMs),
     status:      market.status,
     result:      market.result ?? null,
@@ -108,26 +122,47 @@ function normaliseMarket(event, market, now) {
 /**
  * Scan for crypto prediction markets.
  * @param {{ newOnly?: boolean }} options
- *   newOnly=true  → only 'new' filter (first-mover fast scan)
- *   newOnly=false → 'new' + 'live' (full scan)
+ *   newOnly is kept for caller logs; filtering is from {@link SCAN_JUPITER_FILTERS} (default live only).
  */
 async function scanMarkets({ newOnly = false } = {}) {
   const MIN_PRICE      = parseFloat(process.env.MIN_PRICE)    || 0.15;
   const MAX_PRICE      = parseFloat(process.env.MAX_PRICE)    || 0.85;
-  const MIN_DAYS       = parseInt(process.env.MIN_DAYS_LEFT)  || 1;
+  // Default min "days" = 0 so 5m/15m/same-day markets qualify (Jupiter "live" is often very short)
+  const MIN_DAYS       = (() => {
+    const v = process.env.MIN_DAYS_LEFT;
+    if (v === undefined || v === '') return 0;
+    const n = parseInt(v, 10);
+    return Number.isFinite(n) ? n : 0;
+  })();
+  const MIN_HOURS = (() => {
+    const v = process.env.MIN_HOURS_LEFT;
+    if (v === undefined || v === '') return 0;
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? n : 0;
+  })();
+  const MIN_RESOLVE_MINUTES = (() => {
+    const v = process.env.MIN_RESOLVE_MINUTES;
+    if (v === undefined || v === '') return 0;
+    const n = parseFloat(v);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  })();
   const MAX_DAYS       = parseInt(process.env.MAX_DAYS_LEFT)  || 365;
   const MIN_VOLUME_USD = parseFloat(process.env.MIN_VOLUME)   || 0;
   const TA_REQUIRED    = process.env.TA_REQUIRED !== 'false';  // default true
 
   const now      = Date.now();
-  const minEndMs = now + MIN_DAYS * 86_400_000;
+  const minEndMs =
+    now + MIN_DAYS * 86_400_000 + MIN_HOURS * 3_600_000 + MIN_RESOLVE_MINUTES * 60_000;
   const maxEndMs = now + MAX_DAYS * 86_400_000;
 
   const client  = jupClient();
-  // 'new'      = recently created crypto markets (first-mover opportunity)
-  // 'live'     = currently active crypto markets
-  // 'trending' = high-activity crypto markets (most likely to have edge)
-  const filters = newOnly ? ['new'] : ['new', 'live', 'trending'];
+  // 'live' = tradable, active (default for opportunities). 'new' / 'trending' optional via env.
+  const raw     = (process.env.SCAN_JUPITER_FILTERS || 'live').trim();
+  const filters = raw
+    .split(',')
+    .map(s => s.trim())
+    .filter(s => s.length > 0);
+  if (filters.length === 0) filters.push('live');
 
   const results = await Promise.all(
     filters.map(filter =>
@@ -152,7 +187,7 @@ async function scanMarkets({ newOnly = false } = {}) {
     if (id && !eventMap.has(id)) eventMap.set(id, ev);
   });
   const events = [...eventMap.values()];
-  console.log(`[scanner] Fetched ${events.length} unique crypto events`);
+  console.log(`[scanner] Fetched ${events.length} unique crypto events (filters: ${filters.join(', ')})`);
   if (events.length > 0 && process.env.DEBUG_SCANNER === 'true') {
     const sample = events[0];
     console.log('[scanner] RAW SAMPLE EVENT:', JSON.stringify({
@@ -191,15 +226,21 @@ async function scanMarkets({ newOnly = false } = {}) {
           continue;
         }
         if (m.closeTime.getTime() < minEndMs || m.closeTime.getTime() > maxEndMs) {
-          console.log(`[scanner] ✗ ${q} — ${m.daysLeft}d outside [${MIN_DAYS}d, ${MAX_DAYS}d]`);
+          const ttr = formatTimeToResolveShort(m.secondsToResolve);
+          console.log(
+            `[scanner] ✗ ${q} — ${ttr} to resolve (need ≥ ${formatTimeToResolveShort(
+              (minEndMs - now) / 1000,
+            )}, ≤ ${MAX_DAYS}d)`,
+          );
           continue;
         }
 
         // TA pre-filter — compute math signals; skip if no interesting signal
         // Always attach ta to market so index.js can use mathProbability without recomputing
+        const taSeconds = Math.max(1, m.secondsToResolve);
         let ta = null;
         if (getPointCount(m.id) >= 3) {
-          ta = analyzeMarket(getPriceHistory(m.id), m.daysLeft * 86_400);
+          ta = analyzeMarket(getPriceHistory(m.id), taSeconds);
         }
         if (TA_REQUIRED && ta && !ta.interesting) {
           console.log(`[scanner] ✗ ${q} — no TA signal (math prob ${(ta.mathProbability*100).toFixed(1)}%)`);
@@ -207,7 +248,12 @@ async function scanMarkets({ newOnly = false } = {}) {
         }
 
         m.ta = ta; // attach for index.js math pre-gate (no extra computation)
-        console.log(`[scanner] ✓ ${q} — YES ${(m.yesPrice*100).toFixed(1)}¢ | ${m.daysLeft}d | $${m.volumeUsd.toFixed(2)}${ta ? ` | math ${(ta.mathProbability*100).toFixed(1)}%` : ''}`);
+        const ttrLog = m.secondsToResolve < 86_400
+          ? formatTimeToResolveShort(m.secondsToResolve)
+          : `${m.daysLeft}d`;
+        console.log(
+          `[scanner] ✓ ${q} — YES ${(m.yesPrice*100).toFixed(1)}¢ | ${ttrLog} | $${m.volumeUsd.toFixed(2)}${ta ? ` | math ${(ta.mathProbability*100).toFixed(1)}%` : ''}`,
+        );
         filtered.push(m);
       } catch (e) {
         // skip malformed

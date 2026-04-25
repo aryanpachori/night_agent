@@ -1,6 +1,7 @@
 'use strict';
 
 const { v4: uuidv4 } = require('uuid');
+const { rehydratePosition } = require('../db/positionSerde');
 
 // ─── Core state ───────────────────────────────────────────────────────────────
 const wallet = {
@@ -116,6 +117,7 @@ function openPosition({
   wallet.balance -= actualCost;
   wallet.positions.push(position);
   console.log(`[wallet] Opened ${side} on "${marketQuestion}" | ${contracts} contracts @ $${entryPrice} | cost $${actualCost.toFixed(2)} | balance $${wallet.balance.toFixed(2)}`);
+  touchDb();
   return position;
 }
 
@@ -140,6 +142,7 @@ function closePosition(positionId, closePrice, exitReason = 'manual') {
   wallet.closedPositions.push(position);
 
   console.log(`[wallet] Closed ${position.side} "${position.marketQuestion}" @ $${closePrice} | PnL ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} | balance $${wallet.balance.toFixed(2)}`);
+  touchDb();
   return position;
 }
 
@@ -181,18 +184,23 @@ function closeHalfPosition(positionId, closePrice, exitReason = 'manual_half') {
   wallet.closedPositions.push(partial);
 
   console.log(`[wallet] Closed HALF of ${position.side} "${position.marketQuestion}" @ $${closePrice} | PnL ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`);
+  touchDb();
   return { position, partial };
 }
 
 function updatePositionPrice(positionId, currentPrice) {
   const position = wallet.positions.find(p => p.id === positionId);
-  if (position) position.currentPrice = currentPrice;
+  if (position) {
+    position.currentPrice = currentPrice;
+    touchDb();
+  }
 }
 
 // ─── Brier score ─────────────────────────────────────────────────────────────
 function updateBrierScore(myProbability, actualOutcome) {
   const score = Math.pow(myProbability - actualOutcome, 2);
   wallet.brierScores.push(score);
+  touchDb();
   return getAverageBrierScore();
 }
 
@@ -213,6 +221,7 @@ function hasRecentMarketAlert(marketId) {
 
 function markMarketAlerted(marketId) {
   wallet.alertedMarkets[marketId] = Date.now();
+  touchDb();
 }
 
 function hasRecentPositionAlert(positionId) {
@@ -223,6 +232,37 @@ function hasRecentPositionAlert(positionId) {
 
 function markPositionAlerted(positionId) {
   wallet.alertedPositions[positionId] = Date.now();
+  touchDb();
+}
+
+/** JSON-safe snapshot for PostgreSQL. */
+function getSnapshot() {
+  return {
+    balance: wallet.balance,
+    totalDeposited: wallet.totalDeposited,
+    positions: JSON.parse(JSON.stringify(wallet.positions)),
+    closedPositions: JSON.parse(JSON.stringify(wallet.closedPositions)),
+    brierScores: [...wallet.brierScores],
+    alertedMarkets: { ...wallet.alertedMarkets },
+    alertedPositions: { ...wallet.alertedPositions },
+  };
+}
+
+function loadSnapshot(data) {
+  if (!data || typeof data !== 'object') return;
+  if (data.balance != null) wallet.balance = Number(data.balance);
+  if (data.totalDeposited != null) wallet.totalDeposited = Number(data.totalDeposited);
+  wallet.positions = (data.positions || []).map(rehydratePosition);
+  wallet.closedPositions = (data.closedPositions || []).map(rehydratePosition);
+  wallet.brierScores = Array.isArray(data.brierScores) ? [...data.brierScores] : [];
+  wallet.alertedMarkets = data.alertedMarkets && typeof data.alertedMarkets === 'object' ? { ...data.alertedMarkets } : {};
+  wallet.alertedPositions = data.alertedPositions && typeof data.alertedPositions === 'object' ? { ...data.alertedPositions } : {};
+}
+
+function touchDb() {
+  try {
+    require('../db/persistence').requestPersist();
+  } catch (_) { /* optional module */ }
 }
 
 // ─── Daily closed-today helper ────────────────────────────────────────────────
@@ -250,5 +290,7 @@ module.exports = {
   hasRecentPositionAlert,
   markPositionAlerted,
   getClosedToday,
+  getSnapshot,
+  loadSnapshot,
   wallet, // expose raw state for read-only inspection
 };

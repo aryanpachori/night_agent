@@ -125,6 +125,10 @@ async function runMoreOpportunities() {
 
 // ─── Boot sequence ────────────────────────────────────────────────────────────
 async function main() {
+  const { initPersistence } = require('./src/db/persistence');
+  await initPersistence();
+  require('./src/llm/geminiModelRotation').logStateHint();
+
   console.log('--- Night Agent (paper trading) ---');
   console.log(`[startup] Balance:      $${wallet.getBalance().toFixed(2)} USDC`);
   console.log(`[startup] Scan:         every ${SCAN_INTERVAL} min`);
@@ -182,10 +186,20 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // ─── Graceful shutdown ────────────────────────────────────────────────────────
 process.on('SIGINT', () => {
-  console.log('\n[shutdown] SIGINT received. Goodbye.');
-  const s = wallet.getStats();
-  console.log(`[shutdown] Final balance: $${s.balance.toFixed(2)} | PnL: ${s.totalPnl >= 0 ? '+' : ''}$${s.totalPnl.toFixed(2)}`);
-  process.exit(0);
+  (async () => {
+    console.log('\n[shutdown] SIGINT received. Flushing DB…');
+    try {
+      const { flush } = require('./src/db/persistence');
+      const { disconnect } = require('./src/db/client');
+      await flush();
+      await disconnect();
+    } catch (e) {
+      console.error('[shutdown] DB error:', e.message);
+    }
+    const s = wallet.getStats();
+    console.log(`[shutdown] Final balance: $${s.balance.toFixed(2)} | PnL: ${s.totalPnl >= 0 ? '+' : ''}$${s.totalPnl.toFixed(2)}`);
+    process.exit(0);
+  })();
 });
 process.on('uncaughtException',  err => console.error(`[crash] Uncaught: ${err.message}`, err.stack));
 process.on('unhandledRejection', r   => console.error(`[crash] Unhandled:`, r));

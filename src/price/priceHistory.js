@@ -15,6 +15,9 @@ function recordPrice(marketId, yesPrice, noPrice, volume) {
   const history = store.get(marketId);
   history.push({ timestamp: Date.now(), yesPrice, noPrice, volume });
   if (history.length > MAX_POINTS) history.shift();
+  try {
+    require('../db/persistence').requestPersist();
+  } catch (_) { /* no db or cycle */ }
 }
 
 /**
@@ -61,6 +64,21 @@ function getPointCount(marketId) {
   return store.get(marketId)?.length ?? 0;
 }
 
+/** For PostgreSQL persistence (full map, capped in RAM per market). */
+function getStateForPersist() {
+  return Object.fromEntries([...store.entries()]);
+}
+
+function loadStateFromPersist(obj) {
+  store.clear();
+  for (const [k, v] of Object.entries(obj || {})) {
+    if (Array.isArray(v)) {
+      const capped = v.length > MAX_POINTS ? v.slice(-MAX_POINTS) : v;
+      store.set(k, capped);
+    }
+  }
+}
+
 module.exports = {
   recordPrice,
   getPriceHistory,
@@ -69,4 +87,6 @@ module.exports = {
   getLatestSnapshot,
   getTrackedMarkets,
   getPointCount,
+  getStateForPersist,
+  loadStateFromPersist,
 };

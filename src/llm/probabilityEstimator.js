@@ -3,6 +3,7 @@
 const { getMarketTokenPrice, parseTargetFromQuestion } = require('../price/tokenPrice');
 const { getPriceHistory } = require('../price/priceHistory');
 const { analyzeMarket, fuseProbability } = require('../price/technicalAnalysis');
+const geminiRotation = require('./geminiModelRotation');
 
 // ─── Gemini free-tier friendly pacing ─────────────────────────────────────────
 // Free tier is tight (e.g. ~5 RPM, ~20 RPD on 2.5 Flash). Space calls + retry 429s.
@@ -51,13 +52,12 @@ function parseGeminiRetryAfterMs(err) {
 
 let _warnedGeminiModel = false;
 function warnIfLegacyGeminiModel() {
-  const id = process.env.GEMINI_MODEL || '';
+  const id = geminiRotation.getPinnedModelId() || '';
   if (_warnedGeminiModel || !id) return;
-  if (/gemini-1\.5|gemini-2\.0-flash/i.test(id)) {
+  if (/gemini-1\.5/i.test(id)) {
     _warnedGeminiModel = true;
     console.warn(
-      `[llm] GEMINI_MODEL=${id} — older SKUs often show "limit: 0" or vanishing free quota in the API. ` +
-        'Switch to gemini-3.1-flash-lite-preview or gemini-2.5-flash-lite (see .env.example).',
+      `[llm] GEMINI_MODEL=${id} — some legacy SKUs show weak free quota. Prefer rotation (unset GEMINI_MODEL) or a current Flash family id.`,
     );
   }
 }
@@ -81,6 +81,17 @@ function getOpenAI() {
 }
 
 // ─── Prompt ───────────────────────────────────────────────────────────────────
+
+function formatResolveHorizon(market) {
+  const s = market.secondsToResolve;
+  if (s != null && Number.isFinite(s) && s >= 0) {
+    if (s < 3600) return `${Math.max(1, Math.round(s / 60))} min`;
+    if (s < 86_400) return `${(s / 3600).toFixed(1)} hours`;
+    return `${(s / 86_400).toFixed(1)} days`;
+  }
+  const d = market.daysLeft;
+  return d != null && Number.isFinite(d) ? `${d} day(s)` : 'unknown';
+}
 
 const SYSTEM_PROMPT = `You are a crypto prediction market analyst specialising in YES/NO binary markets on Jupiter.
 
@@ -115,7 +126,7 @@ REAL-TIME TOKEN DATA (${symbol}):
   Current price:   $${price.toFixed(4)}
   24h change:      ${priceChange24h !== null ? (priceChange24h > 0 ? '+' : '') + priceChange24h.toFixed(2) + '%' : 'N/A'}
   ${targetPrice ? `Target:          $${targetPrice} (must go ${direction.toUpperCase()})` : ''}
-  ${requiredMove ? `Required move:   ${requiredMove > 0 ? '+' : ''}${requiredMove}% in ${market.daysLeft} day(s)` : ''}`;
+  ${requiredMove ? `Required move:   ${requiredMove > 0 ? '+' : ''}${requiredMove}% in ${formatResolveHorizon(market)}` : ''}`;
   }
 
   // TA section
@@ -123,7 +134,7 @@ REAL-TIME TOKEN DATA (${symbol}):
 
   return `Market: "${market.question}"
 Crowd probability: ${(market.yesPrice * 100).toFixed(1)}% YES
-Closes: ${market.closeTime?.toDateString?.() ?? 'unknown'} (${market.daysLeft} days)
+Closes: ${market.closeTime?.toDateString?.() ?? 'unknown'} (${formatResolveHorizon(market)} to resolution)
 ${tokenSection}
 ${taSection}
 
@@ -155,8 +166,6 @@ async function estimateWithGemini(market, tokenData, taData) {
   await throttleGeminiCall();
 
   const ai = getGemini();
-  // Default: 3.1 Flash Lite preview — higher RPD on free tier than 2.5 Flash family; avoid gemini-2.0-* (often limit:0).
-  const model = ai.getGenerativeModel({ model: process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite-preview' });
   const prompt = `${SYSTEM_PROMPT}\n\n${buildPrompt(market, tokenData, taData)}`;
 
   console.log(`\n${'─'.repeat(60)}`);
@@ -166,10 +175,23 @@ async function estimateWithGemini(market, tokenData, taData) {
   console.log(`${'─'.repeat(60)}`);
 
   const maxAttempts = geminiMaxRetries();
+  const tried = new Set();
+  let modelId = geminiRotation.pickModel(market);
+  if (!modelId) {
+    throw new Error(
+      '[llm:gemini] All rotation models at daily RPD cap. Unset other work or set GEMINI_MODEL, or try after local midnight reset.',
+    );
+  }
+  const high = geminiRotation.isHighValueMarket(market);
+  console.log(
+    `[llm:gemini] model=${modelId} rotation=${geminiRotation.isRotationDisabled() ? 'off (GEMINI_MODEL)' : 'on'} highValue=${high}`,
+  );
+
   let lastErr;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const result  = await model.generateContent(prompt);
+      const model  = ai.getGenerativeModel({ model: modelId });
+      const result = await model.generateContent(prompt);
       const rawText = result.response.text();
 
       console.log(`[llm:gemini] RAW RESPONSE:`);
@@ -181,10 +203,25 @@ async function estimateWithGemini(market, tokenData, taData) {
       console.log(`[llm:gemini] KEY FACTORS: ${parsed.keyFactors.join(' | ')}`);
       console.log(`${'─'.repeat(60)}\n`);
 
+      geminiRotation.trackUsage(modelId);
       return parsed;
     } catch (err) {
       lastErr = err;
       if (isGeminiRateLimitError(err) && attempt < maxAttempts) {
+        tried.add(modelId);
+        const next = geminiRotation.pickModel(market, { exclude: tried });
+        if (next) {
+          console.warn(
+            `[llm:gemini] Rate limited on ${modelId} → switching to ${next} (${attempt}/${maxAttempts})` +
+              ` — ${err.message.slice(0, 160)}`,
+          );
+          modelId = next;
+          const suggested = parseGeminiRetryAfterMs(err);
+          const backoff   = Math.max(suggested, 4_000);
+          await sleep(backoff);
+          await throttleGeminiCall();
+          continue;
+        }
         const suggested = parseGeminiRetryAfterMs(err);
         const backoff   = Math.max(suggested, Math.min(120_000, 8_000 * 2 ** (attempt - 1)));
         console.warn(
@@ -248,10 +285,8 @@ async function estimateWithOpenAI(market, tokenData, taData) {
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
-// ─── LLM result cache ─────────────────────────────────────────────────────────
 // Prevents re-calling Gemini for the same market within the cache window.
-// 5-min scans would otherwise call Gemini every cycle for every qualifying market.
-const _llmCache = new Map(); // marketId → { result, expiresAt }
+const llmCache = require('./llmCache');
 
 function llmCacheTtlMs() {
   const mins = parseInt(process.env.LLM_CACHE_TTL_MINUTES, 10);
@@ -265,7 +300,7 @@ async function estimateProbability(market) {
   if (!hasGemini && !hasOpenAI) throw new Error('No LLM key set');
 
   // Cache check — skip Gemini entirely if we already have a fresh result
-  const cached = _llmCache.get(market.id);
+  const cached = llmCache.get(market.id);
   if (cached && Date.now() < cached.expiresAt) {
     console.log(`[llm] Cache hit "${market.question.slice(0, 40)}" — skipping LLM (expires in ${Math.round((cached.expiresAt - Date.now()) / 60000)} min)`);
     return cached.result;
@@ -289,7 +324,11 @@ async function estimateProbability(market) {
   try {
     const history = getPriceHistory(market.id);
     if (history.length >= 3) {
-      taData = analyzeMarket(history, (market.daysLeft ?? 1) * 86_400);
+      const taSec =
+        market.secondsToResolve != null && Number.isFinite(market.secondsToResolve) && market.secondsToResolve > 0
+          ? market.secondsToResolve
+          : Math.max(1, (market.daysLeft ?? 1) * 86_400);
+      taData = analyzeMarket(history, taSec);
       if (taData) console.log(`[llm] Math prob: ${(taData.mathProbability * 100).toFixed(1)}% | crowd: ${(market.yesPrice * 100).toFixed(1)}% | gap: ${((taData.mathProbability - market.yesPrice) * 100).toFixed(1)}%`);
     }
   } catch (err) {
@@ -336,7 +375,7 @@ async function estimateProbability(market) {
   console.log(`[llm] Final: "${market.question.slice(0, 50)}" → ${(llmResult.probability * 100).toFixed(1)}% (${llmResult.confidence})`);
 
   // Store in cache so the next scan cycle skips Gemini for this market
-  _llmCache.set(market.id, { result: llmResult, expiresAt: Date.now() + llmCacheTtlMs() });
+  llmCache.setEntry(market.id, llmResult, Date.now() + llmCacheTtlMs());
 
   return llmResult;
 }

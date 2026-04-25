@@ -1,0 +1,81 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ─── Paper wallet (singleton + positions + small dedup tables) ───────────────
+model WalletSettings {
+  id              Int     @id @default(1)
+  balance         Float
+  totalDeposited  Float
+  brierScores     Json
+  updatedAt       DateTime @updatedAt
+}
+
+/// Open / closed paper positions. `payload` is the full app object (dates as ISO in JSON).
+model PaperPosition {
+  id         String   @id
+  status     String
+  marketId   String?
+  payload    Json
+  updatedAt  DateTime @updatedAt
+
+  @@index([status])
+  @@index([marketId])
+}
+
+/// marketId -> last market alert (dedup window)
+model MarketAlertDedup {
+  marketId    String   @id
+  lastAlertAt BigInt
+}
+
+/// positionId -> last position alert
+model PositionAlertDedup {
+  positionId  String   @id
+  lastAlertAt BigInt
+}
+
+// ─── Price history: row per point (index-friendly; cap in app) ───────────────
+model PriceHistoryPoint {
+  id        String   @id @default(cuid())
+  marketId  String
+  ts        BigInt
+  sortIdx   Int
+  yesPrice  Float
+  noPrice   Float
+  volume    Float
+
+  @@index([marketId, sortIdx])
+  @@index([marketId, ts])
+}
+
+// ─── LLM cache: one row per market ───────────────────────────────────────────
+model LlmCacheEntry {
+  marketId  String   @id
+  expiresAt BigInt
+  result    Json
+  updatedAt DateTime @updatedAt
+}
+
+// ─── Daily Gemini RPD usage (per model) ────────────────────────────────────
+model GeminiDailyUsage {
+  ymd       String
+  modelId   String
+  used      Int
+  updatedAt DateTime @updatedAt
+
+  @@id([ymd, modelId])
+  @@index([ymd])
+}
+
+// ─── Legacy key-value (read once, migrate, then ignored) ─────────────────────
+model AppStorage {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}

@@ -273,13 +273,7 @@ function createBot() {
       const snap = snapshots[i];
       const cur  = snap ? (p.side === 'YES' ? snap.yesPrice : snap.noPrice) : (p.currentPrice ?? p.entryPrice);
       if (snap) wallet.updatePositionPrice(p.id, cur);
-      const unreal = p.contracts * cur - p.totalCost;
-      const title  = msgs.positionCompactTitle(p);
-      const closeCt = snap?.closeTime ?? (p.closeTime ? new Date(p.closeTime) : null);
-      const volV    = snap?.volumeUsd ?? p.volumeUsdAtEntry;
-      const volB    = volV != null && Number.isFinite(volV) ? ` \\| Vol: ${msgs.escUsd(volV)}` : '';
-      const endB    = closeCt ? ` \\| Ends: ${msgs.escDateUtc(closeCt)}` : '';
-      return `${i + 1}\\. *${p.side}* — ${title}\n   ${msgs.escFmt(p.entryPrice * 100, 1)}→${msgs.escFmt(cur * 100, 1)}¢ \\| U: ${msgs.esc(msgs.sign(unreal) + msgs.usd(unreal))} \\| ${p.contracts} ct${endB}${volB}`;
+      return msgs.openPositionListLine(p, i, snap);
     });
 
     const fullText = `*Open positions \\(${positions.length}\\)*\n${msgs.DIV}\n${lines.join('\n\n')}`;

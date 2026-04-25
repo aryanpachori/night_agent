@@ -22,6 +22,33 @@ function jupClient() {
 function toDecimal(native) { return native / NATIVE_UNIT; }
 function toNative(decimal)  { return Math.round(decimal * NATIVE_UNIT); }
 
+/**
+ * When Jupiter sets one side to 0, derive the other from the binary complement in native 1e6 units.
+ * Also fixes 0.0¢ display and bogus P&L for NO when buyNoPrice was stored as 0.
+ */
+function normaliseYesNoFromPricing(pricing) {
+  const p = pricing || {};
+  const rawY = p.buyYesPriceUsd;
+  const rawN = p.buyNoPriceUsd;
+  let nNative = rawN;
+  let yNative = rawY;
+  if (nNative == null || nNative === 0) {
+    yNative = yNative ?? 0;
+    if (yNative > 0 && yNative < NATIVE_UNIT) nNative = NATIVE_UNIT - yNative;
+    else nNative = 0;
+  }
+  if (yNative == null || yNative === 0) {
+    nNative = nNative ?? 0;
+    if (nNative > 0 && nNative < NATIVE_UNIT) yNative = NATIVE_UNIT - nNative;
+    else yNative = 0;
+  }
+  let yesPrice = toDecimal(yNative);
+  let noPrice = toDecimal(nNative);
+  if (noPrice <= 0 && yesPrice > 0 && yesPrice < 1) noPrice = 1 - yesPrice;
+  if (yesPrice <= 0 && noPrice > 0 && noPrice < 1) yesPrice = 1 - noPrice;
+  return { yesPrice, noPrice };
+}
+
 /** Human-readable time left for logs (fast markets: minutes, not "0d"). */
 function formatTimeToResolveShort(seconds) {
   const s = Number(seconds);
@@ -72,7 +99,7 @@ function pickContextHint(event, market) {
 
 function normaliseMarket(event, market, now) {
   const pricing = market.pricing || {};
-  const yesPrice  = toDecimal(pricing.buyYesPriceUsd ?? 0);
+  const { yesPrice, noPrice } = normaliseYesNoFromPricing(pricing);
   const volumeUsd = (pricing.volume ?? 0) / NATIVE_UNIT;
   const closeTimeSec = market.closeTime ?? market.resolveAt;
   if (!closeTimeSec) return null;
@@ -107,7 +134,7 @@ function normaliseMarket(event, market, now) {
     category:    event.category  ?? 'crypto',
     subcategory: event.subcategory ?? '',
     yesPrice,
-    noPrice:      toDecimal(pricing.buyNoPriceUsd    ?? (NATIVE_UNIT - (pricing.buyYesPriceUsd ?? 0))),
+    noPrice,
     sellYesPrice: toDecimal(pricing.sellYesPriceUsd  ?? 0),
     sellNoPrice:  toDecimal(pricing.sellNoPriceUsd   ?? 0),
     volumeUsd,
@@ -309,11 +336,17 @@ async function fetchMarket(marketId) {
     const res    = await client.get(`/markets/${marketId}`);
     const m      = res.data?.market ?? res.data;
     if (!m) return null;
-    const pricing = m.pricing || {};
+    const pricing   = m.pricing || {};
+    const { yesPrice, noPrice } = normaliseYesNoFromPricing(pricing);
+    const eventLike = m.event || res.data?.event;
+    const evTitle   = eventLike
+      ? pickEventTitle(eventLike)
+      : String(m.eventTitle || m.eventName || m.parentTitle || m.groupName || '').trim();
+    const outTitle  = String(pickOutcomeTitle(m) || m.outcomeName || m.shortTitle || m.title || '').trim();
     return {
       id:          m.marketId ?? m.id ?? marketId,
-      yesPrice:    toDecimal(pricing.buyYesPriceUsd  ?? 0),
-      noPrice:     toDecimal(pricing.buyNoPriceUsd   ?? 0),
+      yesPrice,
+      noPrice,
       sellYesPrice: toDecimal(pricing.sellYesPriceUsd ?? 0),
       sellNoPrice:  toDecimal(pricing.sellNoPriceUsd  ?? 0),
       volumeUsd:   (pricing.volume ?? 0) / NATIVE_UNIT,
@@ -321,6 +354,8 @@ async function fetchMarket(marketId) {
       result:      m.result ?? null,
       closeTime:   new Date((m.closeTime ?? m.resolveAt) * 1000),
       title:       m.title,
+      eventTitle:  evTitle,
+      outcomeTitle: outTitle,
     };
   } catch (err) {
     console.warn(`[scanner] fetchMarket(${marketId}) error: ${err.message}`);

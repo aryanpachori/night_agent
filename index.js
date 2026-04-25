@@ -20,7 +20,11 @@ const alerts                                     = require('./src/telegram/alert
 const { scanMarkets, fetchAllCryptoMarkets }     = require('./src/scanner/marketScanner');
 const { evaluateOpportunity }                    = require('./src/scanner/opportunityEvaluator');
 const { recordPrice }                            = require('./src/price/priceHistory');
-const { monitorPositions }                       = require('./src/monitor/positionMonitor');
+const { monitorPositions, monitorFastPositions }  = require('./src/monitor/positionMonitor');
+const {
+  canSendOpportunityAlert,
+  recordOpportunityAlert,
+}                  = require('./src/telegram/opportunityRateLimit');
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const SCAN_INTERVAL         = parseInt(process.env.SCAN_INTERVAL_MINUTES)         || 5;
@@ -31,7 +35,8 @@ const MIN_BANKROLL     = parseFloat(process.env.MIN_BANKROLL)            || 10;
 const MAX_OPEN         = parseInt(process.env.MAX_OPEN_POSITIONS)        || 10;
 /** Pending opportunity alerts \\+ open bets — auto\\-scan skips new opps when at cap. */
 const MAX_FOCUS_EVENTS = parseInt(process.env.MAX_FOCUS_EVENTS, 10)       || 2;
-const MAX_OPPORTUNITIES_PER_SCAN = parseInt(process.env.MAX_OPPORTUNITIES_PER_SCAN, 10) || 2;
+/** Per scan: default 1 so a single run cannot spam multiple BET alerts when focus allows more than 1\\. */
+const MAX_OPPORTUNITIES_PER_SCAN = parseInt(process.env.MAX_OPPORTUNITIES_PER_SCAN, 10) || 1;
 const MORE_OPPORTUNITIES_COUNT   = parseInt(process.env.MORE_OPPORTUNITIES_COUNT, 10)   || 2;
 
 // ─── 60-second price poller ───────────────────────────────────────────────────
@@ -93,19 +98,35 @@ async function runOpportunityScan({ newOnly = false, moreMode = false } = {}) {
   let sent = 0;
   for (const market of markets) {
     try {
+      const pendingN2 = alerts.getPendingOpportunityCount();
+      const openN2      = wallet.getOpenPositionCount();
+      if (!moreMode && pendingN2 + openN2 >= MAX_FOCUS_EVENTS) {
+        console.log(`[scan] Focus cap (${MAX_FOCUS_EVENTS}) — stop mid-scan (${pendingN2} pending + ${openN2} open)`);
+        break;
+      }
+      const maxThisPass = moreMode
+        ? Math.min(MORE_OPPORTUNITIES_COUNT, Math.max(0, MAX_FOCUS_EVENTS - pendingN2 - openN2))
+        : Math.min(MAX_OPPORTUNITIES_PER_SCAN, Math.max(0, MAX_FOCUS_EVENTS - pendingN2 - openN2));
+      if (maxThisPass <= 0 || sent >= maxThisPass) break;
+
       console.log(`\n[scan] Analysing: "${market.question.slice(0, 60)}"`);
       console.log(`[scan]   YES price: ${(market.yesPrice * 100).toFixed(1)}¢ | Vol: $${market.volumeUsd.toFixed(2)} | Days: ${market.daysLeft}`);
 
       const r = await evaluateOpportunity(market, balance, { skipRecentAlert: true, verbose: true });
       if (!r) continue;
 
+      if (!canSendOpportunityAlert()) {
+        console.log('[scan] Hourly opportunity alert cap reached — stop');
+        break;
+      }
+
       console.log('[scan]   ✓ OPPORTUNITY — sending alert');
       r.estimate.side = r.evResult.side;
       r.estimate.effectivePrice = r.evResult.effectivePrice;
 
       await alerts.sendOpportunityAlert(market, r.estimate, r.kellyFraction, r.betAmount, balance);
+      recordOpportunityAlert();
       sent++;
-      if (sent >= maxSend) break;
       await sleep(500);
     } catch (err) {
       console.error(`[scan] Error on "${market.question.slice(0, 40)}": ${err.message}`);
@@ -159,13 +180,20 @@ async function main() {
   cron.schedule(scanCron, () => runScan());
   console.log(`[startup] Full scan:       ${scanCron}`);
 
-  // 6. Position monitor
+  // 6a. Fast position monitor — every 1 min (no LLM: only SL + resolution + price tick)
+  cron.schedule('* * * * *', async () => {
+    try { await monitorFastPositions(); }
+    catch (err) { console.error(`[monitor/fast] Error: ${err.message}`); }
+  });
+  console.log('[startup] Fast monitor:     every 60s (SL + resolution, no LLM)');
+
+  // 6b. Full position monitor — LLM re-estimate, TP alert, edge-flip
   const monitorCron = buildCron(MONITOR_INTERVAL);
   cron.schedule(monitorCron, async () => {
     try { await monitorPositions(); }
     catch (err) { console.error(`[monitor] Error: ${err.message}`); }
   });
-  console.log(`[startup] Position monitor: ${monitorCron} (price ticks: move ≥ ${process.env.PRICE_TICK_MIN_MOVE || 0.04} / ${process.env.PRICE_TICK_INTERVAL_MINUTES || 12}min cooldown)`);
+  console.log(`[startup] Full monitor:     ${monitorCron} (TP + LLM edge-flip | price ticks: ≥${process.env.PRICE_TICK_MIN_MOVE || 0.03}¢ / ${process.env.PRICE_TICK_INTERVAL_MINUTES || 5}min cooldown)`);
 
   // 7. Daily summary at 8am
   cron.schedule('0 8 * * *', async () => {

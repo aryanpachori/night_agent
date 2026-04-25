@@ -45,6 +45,42 @@ function positionCompactTitle(p) {
   return raw.length > POSITION_COMPACT_MAX ? escShort(raw, POSITION_COMPACT_MAX) : esc(raw);
 }
 
+/**
+ * Prefer short event \\+ outcome from a live `fetchMarket` snap when available \\(cleaner than rules text\\)\\
+ */
+function positionDisplayTitle(p, marketSnap) {
+  const evS  = (marketSnap?.eventTitle && String(marketSnap.eventTitle).trim()) || '';
+  const outB = (marketSnap?.outcomeTitle && String(marketSnap.outcomeTitle).trim()) || String(p.outcomeTitle || '').trim();
+  if (evS && outB && evS !== outB) {
+    const raw = `${evS} — ${outB}`;
+    return raw.length > POSITION_COMPACT_MAX ? escShort(raw, POSITION_COMPACT_MAX) : esc(raw);
+  }
+  if (evS) {
+    return evS.length > POSITION_COMPACT_MAX ? escShort(evS, POSITION_COMPACT_MAX) : esc(evS);
+  }
+  return positionCompactTitle(p);
+}
+
+/** One line: entry, live token price for your side, unrealized PnL \\(MarkdownV2\\) */
+function openPositionListLine(p, i, marketSnap) {
+  const side = p.side;
+  const cur  = marketSnap
+    ? (side === 'YES' ? marketSnap.yesPrice : marketSnap.noPrice)
+    : (p.currentPrice ?? p.entryPrice);
+  const ent  = p.entryPrice;
+  const unreal = p.contracts * cur - p.totalCost;
+  const tag    = side === 'YES' ? 'YES' : 'NO';
+  const t      = positionDisplayTitle(p, marketSnap);
+  const closeCt = marketSnap?.closeTime ?? (p.closeTime ? new Date(p.closeTime) : null);
+  const volV    = marketSnap?.volumeUsd ?? p.volumeUsdAtEntry;
+  const volB    = volV != null && Number.isFinite(volV) ? ` \\| Vol: ${escUsd(volV)}` : '';
+  const endB    = closeCt ? ` \\| ${escDateUtc(closeCt)}` : '';
+  return (
+    `${i + 1}\\. *${esc(side)}* — ${t}\n` +
+    `   *U\\.PnL* ${esc(sign(unreal) + usd(unreal))} \\| *${esc(tag)} token* ${escFmt(ent * 100, 1)}→${escFmt(cur * 100, 1)}¢ \\| ${esc(String(p.contracts))} ct${endB}${volB}`
+  );
+}
+
 /** MarkdownV2\\-safe UTC timestamp for chat */
 function escDateUtc(d) {
   if (!d) return '…';
@@ -118,7 +154,10 @@ function manualExitKeyboardRow(positionId, index1based) {
 
 // ─── Help ─────────────────────────────────────────────────────────────────────
 function helpMessage() {
-  return `*Night Agent — commands*\n${DIV}\n/balance — wallet balance \\& PnL\n/positions — open positions \\(live end time \\& vol; exit buttons when partially up/down\\)\n/status — snapshot of open bets\n/history — last 10 closed positions\n/stats — performance stats\n/markets — markets that pass the same opportunity filters as alerts \\(LLM; may take a minute\\)\n/scan / /opportunities — run edge scan; sends BET \\/ SKIP if a market passes filters\n/more — extra opportunities \\(same idea, focus rules\\)\n/pause — pause scanning\n/resume — resume scanning\n/ping — health check\n${DIV}\n*Focus mode:* up to *2* pending opportunities \\+ open bets\\. Auto\\-scan waits at the cap\\.\n${DIV}\n*Chat about your bets:*\n• when does this event end \\| what is the volume\n• chances of winning \\| current status\n• status of my bet \\| model win percent\n• how to add size\n${DIV}\n*Ask for bets:* "give me opportunities", "show me events", "what can I bet on" \\| same as /scan\n${DIV}\n*Natural language:* show markets \\(list only\\), more opportunities, should I bet on \\.\\.\\., balance, open positions\n${DIV}\n*Alerts:* BET \\/ SKIP; exit: EXIT \\/ HOLD; manual exit on /positions or /status when unrealized PnL meets threshold`;
+  const cap  = String(process.env.MAX_FOCUS_EVENTS || '2');
+  const hop  = String(process.env.MAX_OPPORTUNITY_ALERTS_PER_HOUR || '0');
+  const hopL = hop !== '0' ? ` Up to *${esc(hop)}* new opportunity alerts per rolling hour\\.\n` : '';
+  return `*Night Agent — commands*\n${DIV}\n/balance — wallet balance \\& PnL\n/positions — open positions \\(U\\.PnL, live *YES\\|NO* price; exit buttons when partially up/down\\)\n/status — snapshot of open bets \\(add natural language to call Gemini on a bet\\)\n/history — last 10 closed positions\n/stats — performance stats\n/markets — markets that pass the same opportunity filters as alerts \\(LLM; may take a minute\\)\n/scan / /opportunities — run edge scan; sends BET \\/ SKIP if a market passes filters\n/more — extra opportunities \\(focus rules\\)\n/pause — pause scanning\n/resume — resume scanning\n/ping — health check\n${DIV}\n*Focus:* at most *${esc(cap)}* combined \\(pending opportunity alerts \\+ open bets\\)\\. New alerts pause until you fall below the cap\\.\n${hopL}${DIV}\n*Chat about your bets:*\n• when does this event end \\| what is the volume\n• chances of winning \\| current status\n• status of my bet \\| model win percent\n• how to add size\n${DIV}\n*Ask for bets:* "give me opportunities", "show me events", "what can I bet on" \\| same as /scan\n${DIV}\n*Natural language:* show markets \\(list only\\), more opportunities, should I bet on \\.\\.\\., balance, open positions\n${DIV}\n*Alerts:* BET \\/ SKIP; exit: EXIT \\/ HOLD; manual exit on /positions or /status when unrealized PnL meets threshold\n${DIV}\n*Side YES vs NO:* the model only outputs *P\\(YES\\)*\\. It bets **NO** when it thinks P\\(YES\\) is *below* the crowd price; **YES** when *above*\\. If you only see one side, the model and crowd rarely disagree the other way on the markets in your scan.`;
 }
 
 // ─── Balance ──────────────────────────────────────────────────────────────────
@@ -262,7 +301,14 @@ function opportunityMessage(market, analysis, kelly) {
     ? `*Side:* ${esc(analysis.side)} \\(entry \\~ ${escFmt(entryPrice * 100, 1)}¢\\)\n`
     : '';
   const timing = eventTimingVolumeLine(market);
-  return `*New opportunity*\n${DIV}\n${formatBetTargetHeader(market)}\n${sideHint}${timing ? `${timing}\n` : ''}${DIV}\nYES token: *${escFmt(market.yesPrice * 100, 1)}¢* \\(crowd ${escPct(market.yesPrice)}\\)\nModel P\\(YES\\): *${escPct(analysis.probability)}*\nEdge: *${esc(edgePct)}%* on ${esc(analysis.side || evR.side)} \\| EV \\$1: *${evCh}*\nConfidence: ${esc(analysis.confidence.toUpperCase())}\n${DIV}\n_${esc(analysis.reasoning)}_\n${DIV}\nFull bet: *${escUsd(betAmount)}* \\(${contracts} contracts @ ${escFmt(entryPrice * 100, 1)}¢\\)\nHalf bet: *${escUsd(halfBetAmount)}* \\(${halfContracts} contracts\\)`;
+  const noPx = 1 - market.yesPrice;
+  return `*New opportunity*\n${DIV}\n${formatBetTargetHeader(market)}\n${sideHint}${timing ? `${timing}\n` : ''}${DIV}\n` +
+    `YES ask: *${escFmt(market.yesPrice * 100, 1)}¢* \\| NO ask: *${escFmt(noPx * 100, 1)}¢* \\(implied P\\(YES\\) ${escPct(market.yesPrice)}\\)\n` +
+    `Model P\\(YES\\): *${escPct(analysis.probability)}*\n` +
+    `Edge: *${esc(edgePct)}%* on ${esc(analysis.side || evR.side)} \\| EV \\$1: *${evCh}*\n` +
+    `Confidence: ${esc(analysis.confidence.toUpperCase())}\n${DIV}\n_${esc(analysis.reasoning)}_\n${DIV}\n` +
+    `Full bet: *${escUsd(betAmount)}* \\(${contracts} contracts @ ${escFmt(entryPrice * 100, 1)}¢ for ${esc(analysis.side || evR.side)}\\)\n` +
+    `Half bet: *${escUsd(halfBetAmount)}* \\(${halfContracts} contracts\\)`;
 }
 
 // ─── Open position price tick \\(focus tracking\\) ─────────────────────────────
@@ -454,5 +500,5 @@ module.exports = {
   manualExitMinUnrealized, shouldOfferManualExit, manualExitKeyboardRow,
   addMoreBetHelpMessage, eventTimingVolumeLine, escDateUtc, daysLeftFromClose,
   esc, escFmt, escUsd, escPct, usd, fmt, sign,
-  positionCompactTitle,
+  positionCompactTitle, positionDisplayTitle, openPositionListLine,
 };

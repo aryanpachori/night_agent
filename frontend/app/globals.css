@@ -1,30 +1,39 @@
-@import "tailwindcss";
+﻿@import "tailwindcss";
 
 :root {
-  --bg-primary:    #222831;
-  --bg-secondary:  #1C2128;
-  --bg-card:       #393E46;
-  --bg-card-hover: #42484F;
-  --border:        #2E333A;
-  --border-bright: #4A5058;
+  /* Backgrounds — warm dark, complements the cream/gold palette */
+  --bg-primary:    #17160D;   /* warm near-black */
+  --bg-secondary:  #1C1B12;   /* sidebar / topbar */
+  --bg-card:       #222118;   /* card surfaces */
+  --bg-card-hover: #2A2920;   /* card hover */
+  --border:        #2E2C22;   /* subtle dividers */
+  --border-bright: #3D3B2C;   /* visible borders */
 
-  --accent:        #948979;
-  --accent-bright: #B8A898;
-  --accent-dim:    #6B6356;
-  --accent-glow:   rgba(148, 137, 121, 0.15);
+  /* Accent — #F8C463 golden yellow */
+  --accent:        #F8C463;
+  --accent-bright: #FADB8A;
+  --accent-dim:    #C49A3A;
+  --accent-glow:   rgba(248, 196, 99, 0.18);
 
-  --success:       #7EA896;
-  --success-dim:   rgba(126, 168, 150, 0.15);
-  --danger:        #C47D6E;
-  --danger-dim:    rgba(196, 125, 110, 0.15);
-  --warning:       #C4A96E;
+  /* Success — brightened olive derived from #81912F */
+  --success:       #9DB336;
+  --success-dim:   rgba(157, 179, 54, 0.15);
 
-  --text-primary:  #DFD0B8;
-  --text-secondary:#A89880;
-  --text-muted:    #6B6356;
+  /* Danger — #E03F4F vivid red from palette */
+  --danger:        #E03F4F;
+  --danger-dim:    rgba(224, 63, 79, 0.15);
 
-  --yes-color:     #7EA896;
-  --no-color:      #C47D6E;
+  /* Warning */
+  --warning:       #F8C463;
+
+  /* Text — #FFFAF0 warm cream from palette */
+  --text-primary:  #FFFAF0;
+  --text-secondary:#B8A478;
+  --text-muted:    #6B5E42;
+
+  /* Market */
+  --yes-color:     #9DB336;
+  --no-color:      #E03F4F;
 }
 
 @theme inline {

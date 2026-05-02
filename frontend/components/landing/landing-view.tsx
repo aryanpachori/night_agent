@@ -326,7 +326,7 @@ export function LandingView() {
           <br />
           Telegram delivers the alert in seconds.
         </p>
-        <div className="grid min-w-0 items-center gap-8 sm:gap-10 lg:grid-cols-2">
+        <div className="grid min-w-0 items-center gap-4 sm:gap-6 lg:grid-cols-2">
           <BrowserFrameMock />
           <div className="flex min-w-0 justify-center lg:justify-end">
             <PhoneFrame />

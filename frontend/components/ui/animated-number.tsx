@@ -1,10 +1,10 @@
 'use client'
-import NumberFlow from '@number-flow/react'
+import NumberFlow, { type Format } from '@number-flow/react'
 import { cn } from '@/lib/utils'
 
 interface AnimatedNumberProps {
   value: number
-  format?: Intl.NumberFormatOptions
+  format?: Format
   prefix?: string
   suffix?: string
   className?: string
@@ -13,7 +13,7 @@ interface AnimatedNumberProps {
 
 export function AnimatedNumber({
   value,
-  format = { minimumFractionDigits: 2, maximumFractionDigits: 2 },
+  format = { minimumFractionDigits: 2, maximumFractionDigits: 2 } as Format,
   prefix,
   suffix,
   className,

@@ -9,6 +9,9 @@
   --border:        #2E2C22;   /* subtle dividers */
   --border-bright: #3D3B2C;   /* visible borders */
 
+  /* Brand cyan for charts / Jupiter emphasis (Midnight Pro accent) */
+  --accent-cyan:   #00C2FF;
+
   /* Accent — #F8C463 golden yellow */
   --accent:        #F8C463;
   --accent-bright: #FADB8A;
@@ -67,4 +70,24 @@ body {
 @keyframes fade-in {
   from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: translateY(0); }
+}
+
+.loading-shimmer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.loading-shimmer::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(0, 194, 255, 0.06),
+    transparent
+  );
+  animation: shimmer 1.8s ease-in-out infinite;
 }

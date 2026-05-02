@@ -23,8 +23,8 @@ export function PnlChart() {
       <AreaChart data={mockPnlHistory} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
         <defs>
           <linearGradient id="pnlGradient" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor="#F8C463" stopOpacity={0.35} />
-            <stop offset="95%" stopColor="#F8C463" stopOpacity={0} />
+            <stop offset="5%" stopColor="#00C2FF" stopOpacity={0.25} />
+            <stop offset="95%" stopColor="#00C2FF" stopOpacity={0} />
           </linearGradient>
         </defs>
         <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
@@ -45,11 +45,11 @@ export function PnlChart() {
         <Area
           type="monotone"
           dataKey="balance"
-          stroke="#F8C463"
+          stroke="#00C2FF"
           strokeWidth={2}
           fill="url(#pnlGradient)"
           dot={false}
-          activeDot={{ r: 4, fill: '#F8C463', stroke: 'var(--bg-primary)', strokeWidth: 2 }}
+          activeDot={{ r: 4, fill: '#00C2FF', stroke: '#0A0E1A', strokeWidth: 2 }}
         />
       </AreaChart>
     </ResponsiveContainer>

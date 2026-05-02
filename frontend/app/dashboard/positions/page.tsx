@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Tabs } from '@/components/ui/tabs'
 import { ExitModal } from '@/components/positions/exit-modal'
+import { Tooltip } from '@/components/ui/tooltip'
 import { mockPositions, mockClosedPositions } from '@/data/mock'
 import { formatUSD, formatPct, formatPrice } from '@/lib/utils'
 import { staggerContainer, tableRow } from '@/lib/animations'
@@ -35,10 +36,10 @@ export default function PositionsPage() {
     <div className="flex flex-col flex-1">
       <Topbar title="Positions" subtitle="Your open and closed paper trades" />
 
-      <div className="p-6 space-y-5">
+      <div className="space-y-5 p-4 pb-6 sm:p-6">
         {/* Summary row */}
         <motion.div
-          className="grid grid-cols-3 gap-4"
+          className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4"
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4 }}
@@ -48,13 +49,13 @@ export default function PositionsPage() {
             { icon: TrendingUp, label: 'Current Value', value: formatUSD(totalValue), color: 'text-[var(--text-primary)]' },
             { icon: totalPnl >= 0 ? TrendingUp : TrendingDown, label: 'Unrealized P&L', value: (totalPnl >= 0 ? '+' : '') + formatUSD(totalPnl), color: totalPnl >= 0 ? 'text-[var(--success)]' : 'text-[var(--danger)]' },
           ].map(({ icon: Icon, label, value, color }) => (
-            <div key={label} className="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl p-4 flex items-center gap-3">
+            <div key={label} className="flex items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4">
               <div className="p-2 rounded-lg bg-[var(--accent-glow)]">
                 <Icon className="w-4 h-4 text-[var(--accent)]" />
               </div>
               <div>
                 <p className="text-xs text-[var(--text-muted)] uppercase tracking-wider">{label}</p>
-                <p className={`text-lg font-mono font-bold ${color}`}>{value}</p>
+                <p className={`font-mono text-base font-bold sm:text-lg ${color}`}>{value}</p>
               </div>
             </div>
           ))}
@@ -67,8 +68,10 @@ export default function PositionsPage() {
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl overflow-hidden"
+            className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--bg-card)]"
           >
+            <div className="overflow-x-auto overscroll-x-contain">
+              <div className="min-w-[920px]">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-[var(--border)]">
@@ -86,8 +89,10 @@ export default function PositionsPage() {
                       variants={tableRow}
                       className="border-b border-[var(--border)] hover:bg-[var(--bg-card-hover)] transition-colors"
                     >
-                      <td className="px-4 py-3">
-                        <p className="text-xs text-[var(--text-primary)] max-w-[180px] truncate">{pos.marketQuestion}</p>
+                      <td className="max-w-[200px] px-4 py-3 md:max-w-[min(320px,28vw)]">
+                        <Tooltip content={pos.marketQuestion}>
+                          <span className="block truncate text-xs text-[var(--text-primary)]">{pos.marketQuestion}</span>
+                        </Tooltip>
                         <p className="text-[10px] text-[var(--text-muted)] font-mono">{pos.marketId}</p>
                       </td>
                       <td className="px-4 py-3">
@@ -122,14 +127,16 @@ export default function PositionsPage() {
             </table>
 
             {/* Totals row */}
-            <div className="flex items-center justify-end gap-8 px-4 py-3 border-t border-[var(--border)] bg-[var(--bg-secondary)]">
+            <div className="flex items-center justify-end gap-6 border-t border-[var(--border)] bg-[var(--bg-secondary)] px-4 py-3 sm:gap-8">
               <span className="text-xs text-[var(--text-muted)]">Totals</span>
               <span className="text-xs font-mono text-[var(--text-primary)]">{formatUSD(totalCost)}</span>
               <span className="text-xs font-mono text-[var(--text-primary)]">{formatUSD(totalValue)}</span>
               <span className={`text-xs font-mono font-semibold ${totalPnl >= 0 ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>
                 {totalPnl >= 0 ? '+' : ''}{formatUSD(totalPnl)}
               </span>
-              <span className="w-16" />
+              <span className="w-12 sm:w-16" />
+            </div>
+              </div>
             </div>
           </motion.div>
         )}
@@ -139,9 +146,10 @@ export default function PositionsPage() {
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl overflow-hidden"
+            className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--bg-card)]"
           >
-            <table className="w-full">
+            <div className="overflow-x-auto overscroll-x-contain">
+              <table className="w-full min-w-[760px]">
               <thead>
                 <tr className="border-b border-[var(--border)]">
                   {['Market', 'Category', 'Side', 'Contracts', 'Entry', 'Exit', 'P&L', 'Result', 'Closed'].map(h => (
@@ -193,6 +201,7 @@ export default function PositionsPage() {
                 })}
               </motion.tbody>
             </table>
+            </div>
           </motion.div>
         )}
       </div>

@@ -1,12 +1,13 @@
 'use client'
 import { motion } from 'framer-motion'
-import { Wallet, TrendingUp, Target, Activity, Pause, RotateCcw } from 'lucide-react'
+import { Wallet, TrendingUp, Target, Activity } from 'lucide-react'
 import { Topbar } from '@/components/layout/topbar'
 import { StatCard } from '@/components/dashboard/stat-card'
 import { PnlChart } from '@/components/dashboard/pnl-chart'
+import { BotStatusPanel } from '@/components/dashboard/bot-status-panel'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
+import { Tooltip } from '@/components/ui/tooltip'
 import { mockWallet, mockPositions, mockAlerts } from '@/data/mock'
 import { formatUSD, formatPct, formatPrice, formatTimeAgo } from '@/lib/utils'
 
@@ -15,16 +16,21 @@ const fadeUp = {
   animate: { opacity: 1, y: 0 },
 }
 
+function currentPriceTrend(pos: (typeof mockPositions)[number]): 'up' | 'down' {
+  if (pos.side === 'YES') return pos.currentPrice >= pos.entryPrice ? 'up' : 'down'
+  return pos.currentPrice <= pos.entryPrice ? 'up' : 'down'
+}
+
 export default function DashboardPage() {
   return (
     <div className="flex flex-col flex-1">
       <Topbar title="Dashboard" subtitle="Paper trading overview" />
 
-      <div className="p-6 space-y-6">
+      <div className="space-y-6 p-4 pb-6 sm:p-6">
 
         {/* Stat cards */}
         <motion.div
-          className="grid grid-cols-4 gap-4"
+          className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4"
           initial={fadeUp.initial}
           animate={fadeUp.animate}
           transition={{ duration: 0.4 }}
@@ -51,23 +57,45 @@ export default function DashboardPage() {
             value={`${mockWallet.winRate}%`}
             subtitle={`${mockWallet.wins}W / ${mockWallet.losses}L`}
           />
-          <StatCard
-            icon={Activity}
-            label="Brier Score"
-            value={mockWallet.brierScore.toFixed(2)}
-            subtitle="Model accuracy (lower = better)"
-          />
+          <Card className="p-5">
+            <div className="mb-3 flex items-start justify-between">
+              <div className="rounded-lg bg-[var(--accent-glow)] p-2">
+                <Activity className="h-4 w-4 text-[var(--accent)]" />
+              </div>
+            </div>
+            <div className="mb-1 flex items-center gap-1">
+              <p className="text-xs uppercase tracking-wider text-[var(--text-muted)]">Brier Score</p>
+              <Tooltip content="Brier Score measures probability calibration. 0.0 = perfect, 0.25 = random guessing. Our model scores 0.11 — roughly 3× better than chance.">
+                <button
+                  type="button"
+                  className="text-[10px] leading-none text-[var(--text-muted)] hover:text-[var(--accent)]"
+                  aria-label="About Brier Score"
+                >
+                  ⓘ
+                </button>
+              </Tooltip>
+            </div>
+            <motion.p
+              className="font-mono text-2xl font-bold text-[var(--text-primary)]"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4 }}
+            >
+              {mockWallet.brierScore.toFixed(2)}
+            </motion.p>
+            <p className="mt-1 text-xs text-[var(--text-muted)]">Model accuracy — lower is better (perfect = 0)</p>
+          </Card>
         </motion.div>
 
         {/* Chart + Bot Status */}
         <motion.div
-          className="grid grid-cols-3 gap-4"
+          className="grid grid-cols-1 gap-4 lg:grid-cols-3"
           initial={fadeUp.initial}
           animate={fadeUp.animate}
           transition={{ duration: 0.4, delay: 0.1 }}
         >
-          <Card className="col-span-2 p-5">
-            <div className="flex items-center justify-between mb-4">
+          <Card className="p-5 lg:col-span-2">
+            <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <h3 className="text-sm font-semibold text-[var(--text-primary)]">Portfolio Performance</h3>
                 <p className="text-xs text-[var(--text-muted)]">30-day paper trading balance</p>
@@ -77,55 +105,12 @@ export default function DashboardPage() {
             <PnlChart />
           </Card>
 
-          {/* Bot Status */}
-          <Card className="p-5 flex flex-col gap-4">
-            <div>
-              <h3 className="text-sm font-semibold text-[var(--text-primary)] mb-1">Bot Status</h3>
-              <div className="flex items-center gap-2">
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--success)] opacity-75" />
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-[var(--success)]" />
-                </span>
-                <span className="text-xs text-[var(--success)] font-medium">Scanning markets</span>
-              </div>
-            </div>
-
-            <div className="space-y-2.5 text-xs">
-              {[
-                ['Last scan', '2 minutes ago'],
-                ['Next scan', 'in 3 minutes'],
-                ['Markets watching', '847'],
-                ['Alerts today', '3 / 3'],
-                ['Categories', 'Crypto, Politics'],
-              ].map(([label, value]) => (
-                <div key={label} className="flex justify-between">
-                  <span className="text-[var(--text-muted)]">{label}</span>
-                  <span className="text-[var(--text-secondary)] font-mono">{value}</span>
-                </div>
-              ))}
-            </div>
-
-            {/* Alert usage bar */}
-            <div>
-              <div className="flex justify-between text-[10px] text-[var(--text-muted)] mb-1">
-                <span>Daily alerts used</span>
-                <span>3/3</span>
-              </div>
-              <div className="h-1.5 bg-[var(--border)] rounded-full">
-                <div className="h-full w-full bg-[var(--accent)] rounded-full" />
-              </div>
-            </div>
-
-            <div className="flex gap-2 mt-auto">
-              <Button variant="secondary" size="sm" icon={<Pause className="w-3 h-3" />} className="flex-1">Pause</Button>
-              <Button variant="ghost" size="sm" icon={<RotateCcw className="w-3 h-3" />}>Reset</Button>
-            </div>
-          </Card>
+          <BotStatusPanel />
         </motion.div>
 
         {/* Positions + Recent Alerts */}
         <motion.div
-          className="grid grid-cols-2 gap-4"
+          className="grid grid-cols-1 gap-4 xl:grid-cols-2"
           initial={fadeUp.initial}
           animate={fadeUp.animate}
           transition={{ duration: 0.4, delay: 0.2 }}
@@ -136,14 +121,23 @@ export default function DashboardPage() {
             <div className="space-y-2">
               {mockPositions.map(pos => {
                 const pnlPositive = pos.pnl >= 0
+                const favorable = currentPriceTrend(pos) === 'up'
                 return (
-                  <div key={pos.id} className="flex items-center gap-3 p-3 rounded-lg bg-[var(--bg-secondary)] hover:bg-[var(--bg-card-hover)] transition-colors">
-                    <Badge variant={pos.side === 'YES' ? 'success' : 'danger'} size="sm">{pos.side}</Badge>
-                    <div className="flex-1 min-w-0">
+                  <div key={pos.id} className="flex flex-col gap-2 rounded-lg bg-[var(--bg-secondary)] p-3 transition-colors hover:bg-[var(--bg-card-hover)] sm:flex-row sm:items-center sm:gap-3">
+                    <Badge variant={pos.side === 'YES' ? 'success' : 'danger'} size="sm" className="w-fit shrink-0">
+                      {pos.side}
+                    </Badge>
+                    <div className="min-w-0 flex-1">
                       <p className="text-xs text-[var(--text-primary)] truncate">{pos.marketQuestion}</p>
-                      <p className="text-[10px] text-[var(--text-muted)]">{pos.contracts} contracts @ {formatPrice(pos.entryPrice)}</p>
+                      <p className="text-[10px] text-[var(--text-muted)]">
+                        {pos.contracts} contracts · Entry {formatPrice(pos.entryPrice)}{' '}
+                        · Now{' '}
+                        <span className={`font-mono font-semibold ${favorable ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>
+                          {favorable ? '↑' : '↓'} {formatPrice(pos.currentPrice)}
+                        </span>
+                      </p>
                     </div>
-                    <div className="text-right">
+                    <div className="ml-auto shrink-0 border-t border-[var(--border)] pt-2 text-right sm:border-t-0 sm:pt-0">
                       <p className={`text-xs font-mono font-semibold ${pnlPositive ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>
                         {pnlPositive ? '+' : ''}{formatUSD(pos.pnl)}
                       </p>

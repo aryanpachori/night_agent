@@ -1,94 +1,121 @@
 'use client'
+
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { Zap, MessageCircle, Wallet, Shield, TestTube2, Clock } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { Zap, Shield, TestTube2, Clock } from 'lucide-react'
+
+function TelegramIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} width={20} height={20} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z" />
+    </svg>
+  )
+}
+
+function WalletIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 12V7H5a2 2 0 0 1 0-4h14v4" />
+      <path d="M3 5v14a2 2 0 0 0 2 2h16v-5" />
+      <path d="M18 12a2 2 0 0 0 0 4h4v-4Z" />
+    </svg>
+  )
+}
 
 export default function LoginPage() {
   const router = useRouter()
 
+  const telegramBtnStyle: React.CSSProperties = {
+    background: 'var(--bg-card)',
+    border: '1px solid var(--border-bright)',
+    color: 'var(--text-primary)',
+    borderRadius: '10px',
+    padding: '12px 24px',
+    width: '100%',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '10px',
+    cursor: 'pointer',
+    transition: 'border-color 0.15s',
+  }
+
   return (
-    <div className="min-h-screen bg-[var(--bg-primary)] flex items-center justify-center relative overflow-hidden">
-      {/* Subtle grid pattern */}
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[var(--bg-primary)]">
       <div
         className="absolute inset-0 opacity-[0.03]"
         style={{
-          backgroundImage: 'linear-gradient(var(--border-bright) 1px, transparent 1px), linear-gradient(90deg, var(--border-bright) 1px, transparent 1px)',
+          backgroundImage:
+            'linear-gradient(var(--border-bright) 1px, transparent 1px), linear-gradient(90deg, var(--border-bright) 1px, transparent 1px)',
           backgroundSize: '40px 40px',
         }}
       />
 
-      {/* Radial gradient glow */}
-      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-        <div className="w-[600px] h-[600px] rounded-full bg-[var(--accent-glow)] blur-[120px] opacity-30" />
+      <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+        <div className="h-[600px] w-[600px] rounded-full bg-[var(--accent-glow)] opacity-30 blur-[120px]" />
       </div>
 
       <motion.div
         initial={{ opacity: 0, y: 20, scale: 0.97 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         transition={{ duration: 0.5, ease: [0.0, 0.0, 0.2, 1] }}
-        className="relative z-10 w-full max-w-sm mx-4"
+        className="relative z-10 mx-4 w-full max-w-sm"
       >
-        <div className="bg-[var(--bg-card)] border border-[var(--border-bright)] rounded-2xl p-8 shadow-2xl">
-          {/* Logo */}
-          <div className="flex flex-col items-center mb-8">
-            <div className="w-12 h-12 rounded-2xl bg-[var(--accent)] flex items-center justify-center mb-4 shadow-[0_0_30px_var(--accent-glow)]">
-              <Zap className="w-6 h-6 text-[var(--bg-primary)]" />
+        <div className="rounded-2xl border border-[var(--border-bright)] bg-[var(--bg-card)] p-8 shadow-2xl">
+          <div className="mb-8 flex flex-col items-center">
+            <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--accent)] shadow-[0_0_30px_var(--accent-glow)]">
+              <Zap className="h-6 w-6 text-[var(--bg-primary)]" />
             </div>
-            <h1 className="text-xl font-bold text-[var(--text-primary)] mb-1">NightAgent</h1>
-            <p className="text-xs text-[var(--text-muted)] text-center max-w-[200px]">
+            <h1 className="mb-1 text-xl font-bold text-[var(--text-primary)]">NightAgent</h1>
+            <p className="max-w-[220px] text-center text-xs text-[var(--text-muted)]">
               AI quant layer for Jupiter Prediction Markets
             </p>
           </div>
 
-          {/* Login options */}
-          <div className="space-y-3 mb-6">
+          <div className="mb-6 space-y-3">
             <button
+              type="button"
+              style={telegramBtnStyle}
+              className="hover:border-[var(--accent)]/50"
               onClick={() => router.push('/dashboard')}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-[#2AABEE]/30 bg-[#2AABEE]/10 text-[var(--text-primary)] hover:bg-[#2AABEE]/15 transition-all group"
             >
-              <div className="w-8 h-8 rounded-lg bg-[#2AABEE]/20 flex items-center justify-center flex-shrink-0">
-                <MessageCircle className="w-4 h-4 text-[#2AABEE]" />
-              </div>
-              <div className="text-left">
-                <p className="text-sm font-semibold">Login with Telegram</p>
-                <p className="text-[10px] text-[var(--text-muted)]">One-click auth via Telegram bot</p>
-              </div>
+              <TelegramIcon className="text-[var(--accent-cyan)]" />
+              <span className="text-sm font-semibold">Continue with Telegram</span>
             </button>
 
             <div className="flex items-center gap-3">
-              <div className="flex-1 h-px bg-[var(--border)]" />
+              <div className="h-px flex-1 bg-[var(--border)]" />
               <span className="text-[10px] text-[var(--text-muted)]">OR</span>
-              <div className="flex-1 h-px bg-[var(--border)]" />
+              <div className="h-px flex-1 bg-[var(--border)]" />
             </div>
 
             <button
+              type="button"
               onClick={() => router.push('/dashboard')}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-[var(--border-bright)] bg-[var(--bg-secondary)] text-[var(--text-primary)] hover:border-[var(--accent)]/40 transition-all"
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-[var(--border-bright)] bg-[var(--bg-secondary)] px-4 py-3 text-[var(--text-primary)] transition-all hover:border-[var(--accent)]/40"
             >
-              <div className="w-8 h-8 rounded-lg bg-[var(--accent-glow)] flex items-center justify-center flex-shrink-0">
-                <Wallet className="w-4 h-4 text-[var(--accent)]" />
-              </div>
-              <div className="text-left flex-1">
-                <p className="text-sm font-semibold">Connect Wallet</p>
-                <p className="text-[10px] text-[var(--text-muted)]">Phantom · Backpack · Solflare</p>
-              </div>
+              <WalletIcon className="h-5 w-5" />
+              <span className="text-sm font-semibold">Connect Wallet</span>
             </button>
           </div>
 
-          {/* Trust indicators */}
-          <div className="space-y-2">
+          <div className="mb-5 space-y-2">
             {[
-              { icon: Shield,   text: 'No password needed' },
+              { icon: Shield, text: 'No password needed' },
               { icon: TestTube2, text: 'Paper trading — no real money' },
-              { icon: Clock,    text: 'Your keys never leave your wallet' },
+              { icon: Clock, text: 'Your keys never leave your wallet' },
             ].map(({ icon: Icon, text }) => (
               <div key={text} className="flex items-center gap-2 text-[10px] text-[var(--text-muted)]">
-                <Icon className="w-3 h-3 text-[var(--accent-dim)] flex-shrink-0" />
+                <Icon className="h-3 w-3 flex-shrink-0 text-[var(--accent-dim)]" />
                 <span>{text}</span>
               </div>
             ))}
           </div>
+
+          <p className="text-center text-[12px] leading-relaxed text-[var(--text-muted)]">
+            After connecting, you&apos;ll be taken directly to your dashboard with $1,000 paper USDC ready to trade. No
+            credit card. No email. No password.
+          </p>
         </div>
       </motion.div>
     </div>

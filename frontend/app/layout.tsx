@@ -20,8 +20,12 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "NightAgent — AI Prediction Market Intelligence",
-  description: "AI-powered prediction market intelligence for Jupiter on Solana",
+  title: {
+    default: "NightAgent — AI Quant Layer for Jupiter Prediction Markets",
+    template: "%s — NightAgent",
+  },
+  description:
+    "Scan 3,400+ markets, find mispriced bets with Black-Scholes AI, and get Telegram alerts the moment there's real edge.",
 };
 
 export default function RootLayout({

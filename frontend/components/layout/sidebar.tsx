@@ -2,23 +2,31 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { motion } from 'framer-motion'
+import type { LucideIcon } from 'lucide-react'
 import { LayoutDashboard, TrendingUp, Bell, Globe, Settings, Zap, LogOut } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { mockUser, mockWallet } from '@/data/mock'
 
-const navItems = [
-  { href: '/dashboard',           icon: LayoutDashboard, label: 'Dashboard' },
-  { href: '/dashboard/positions', icon: TrendingUp,      label: 'Positions',  badge: '3' },
-  { href: '/dashboard/alerts',    icon: Bell,            label: 'Alerts',     badge: '3' },
-  { href: '/dashboard/markets',   icon: Globe,           label: 'Markets' },
-  { href: '/dashboard/settings',  icon: Settings,        label: 'Settings' },
+export type DashboardNavItem = {
+  href: string
+  icon: LucideIcon
+  label: string
+  badge?: string
+}
+
+export const dashboardNavItems: DashboardNavItem[] = [
+  { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+  { href: '/dashboard/positions', icon: TrendingUp, label: 'Positions', badge: '3' },
+  { href: '/dashboard/alerts', icon: Bell, label: 'Alerts', badge: '3' },
+  { href: '/dashboard/markets', icon: Globe, label: 'Markets' },
+  { href: '/dashboard/settings', icon: Settings, label: 'Settings' },
 ]
 
 export function Sidebar() {
   const pathname = usePathname()
 
   return (
-    <aside className="fixed left-0 top-0 h-screen w-[220px] flex flex-col border-r border-[var(--border)] bg-[var(--bg-secondary)] z-50">
+    <aside className="fixed left-0 top-0 z-50 hidden h-screen w-[220px] flex-col border-r border-[var(--border)] bg-[var(--bg-secondary)] md:flex">
 
       {/* Logo */}
       <div className="p-5 border-b border-[var(--border)]">
@@ -43,7 +51,7 @@ export function Sidebar() {
 
       {/* Nav items */}
       <nav className="flex-1 p-3 space-y-0.5">
-        {navItems.map(({ href, icon: Icon, label, badge }) => {
+        {dashboardNavItems.map(({ href, icon: Icon, label, badge }) => {
           const isActive = pathname === href || (href !== '/dashboard' && pathname.startsWith(href))
           return (
             <Link

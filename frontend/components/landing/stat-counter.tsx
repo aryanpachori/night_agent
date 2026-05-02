@@ -33,7 +33,7 @@ export function StatCounter({ end, suffix = '', prefix = '', duration = 2000, la
 
   return (
     <div ref={ref} className="text-center">
-      <p className="text-4xl font-mono font-bold text-[var(--text-primary)]">
+      <p className="text-3xl font-mono font-bold text-[var(--text-primary)] sm:text-4xl">
         {prefix}{count.toLocaleString()}{suffix}
       </p>
       <p className="text-sm text-[var(--text-primary)] font-medium mt-1">{label}</p>

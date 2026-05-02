@@ -33,6 +33,12 @@ const categoryColors: Record<string, string> = {
   sports:    'text-[var(--text-secondary)]',
 }
 
+function getEdgeColor(edge: number): string {
+  if (edge >= 0.15) return 'var(--success)'
+  if (edge >= 0.08) return 'var(--accent-cyan)'
+  return 'var(--text-muted)'
+}
+
 export function MarketCard({ market, index }: { market: Market; index: number }) {
   const router = useRouter()
   const { ref, inView } = useInView({ triggerOnce: true, threshold: 0.1, rootMargin: '0px 0px -40px 0px' })
@@ -45,17 +51,19 @@ export function MarketCard({ market, index }: { market: Market; index: number })
       transition={{ duration: 0.4, delay: (index % 3) * 0.08, ease: [0.0, 0.0, 0.2, 1] }}
       whileHover={{ y: -3, transition: { duration: 0.15 } }}
       onClick={() => router.push(`/dashboard/markets/${market.id}`)}
-      className="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl p-4 cursor-pointer hover:border-[var(--accent)]/40 hover:shadow-[0_8px_30px_rgba(148,137,121,0.1)] transition-colors"
+      className="relative cursor-pointer overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4 transition-colors hover:border-[var(--accent)]/40 hover:shadow-[0_8px_30px_rgba(148,137,121,0.1)]"
     >
+      {market.isNew && (
+        <span className="absolute right-3 top-3 z-10 animate-pulse rounded-full border border-[var(--accent)]/30 bg-[var(--accent-glow)] px-2 py-0.5 text-[10px] font-bold text-[var(--accent)]">
+          NEW
+        </span>
+      )}
       {/* Header */}
-      <div className="flex items-start justify-between gap-2 mb-3">
-        <div className="flex items-center gap-2 flex-wrap">
+      <div className="mb-3 flex items-start justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <span className={`text-xs font-medium capitalize ${categoryColors[market.category] || 'text-[var(--text-secondary)]'}`}>
             {market.category}
           </span>
-          {market.isNew && (
-            <Badge variant="accent" size="sm">NEW</Badge>
-          )}
           {market.confidence && (
             <Badge variant={confidenceVariant[market.confidence] || 'muted'} size="sm" className="capitalize">
               {market.confidence}
@@ -87,11 +95,19 @@ export function MarketCard({ market, index }: { market: Market; index: number })
 
       {/* AI Analysis row */}
       {market.myProbability && market.edge !== undefined && (
-        <div className="flex items-center gap-2 p-2 bg-[var(--accent-glow)] rounded-lg border border-[var(--accent)]/20 mb-3">
-          <Sparkles className="w-3 h-3 text-[var(--accent)]" />
+        <div className="mb-3 flex items-center gap-2 rounded-lg border border-[var(--accent)]/20 bg-[var(--accent-glow)] p-2">
+          <Sparkles className="h-3 w-3 text-[var(--accent)]" />
           <div className="flex items-center gap-3 text-[10px]">
-            <span className="text-[var(--text-muted)]">AI: <span className="text-[var(--accent-bright)] font-mono font-semibold">{Math.round(market.myProbability * 100)}%</span></span>
-            <span className="text-[var(--text-muted)]">Edge: <span className="text-[var(--accent-bright)] font-mono font-semibold">{formatPct(market.edge * 100, 0)}</span></span>
+            <span className="text-[var(--text-muted)]">
+              AI:{' '}
+              <span className="font-mono font-semibold text-[var(--accent-bright)]">{Math.round(market.myProbability * 100)}%</span>
+            </span>
+            <span className="text-[var(--text-muted)]">
+              Edge:{' '}
+              <span style={{ color: getEdgeColor(market.edge) }} className="font-mono font-semibold">
+                {formatPct(market.edge * 100, 0)}
+              </span>
+            </span>
           </div>
         </div>
       )}

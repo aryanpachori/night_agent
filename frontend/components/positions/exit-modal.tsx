@@ -46,7 +46,7 @@ export function ExitModal({ isOpen, onClose, position }: ExitModalProps) {
             exit="exit"
             className="fixed inset-0 flex items-center justify-center z-50 pointer-events-none"
           >
-            <div className="pointer-events-auto w-full max-w-md bg-[var(--bg-card)] border border-[var(--border-bright)] rounded-2xl p-6 shadow-2xl mx-4">
+            <div className="pointer-events-auto mx-4 max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl border border-[var(--border-bright)] bg-[var(--bg-card)] p-6 shadow-2xl">
               <div className="flex items-center justify-between mb-5">
                 <h2 className="text-sm font-semibold text-[var(--text-primary)]">Exit Position</h2>
                 <button onClick={onClose} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors">
@@ -94,6 +94,11 @@ export function ExitModal({ isOpen, onClose, position }: ExitModalProps) {
                 <AlertTriangle className="w-3.5 h-3.5 text-[var(--warning)] mt-0.5 flex-shrink-0" />
                 <p className="text-xs text-[var(--warning)]">This will close your position at the current market price.</p>
               </div>
+
+              <p className="text-xs text-[var(--warning)] mt-2 mb-5">
+                ⚠ Paper trading only — no real transaction fees applied. In live trading, Jupiter charges ~0.5–1% per
+                trade.
+              </p>
 
               <div className="flex gap-2">
                 <Button variant="ghost" size="md" onClick={onClose} className="flex-1">Cancel</Button>

@@ -1,6 +1,6 @@
 'use client'
-import { useState } from 'react'
-import { motion } from 'framer-motion'
+import { useRef, useState } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
 import { Topbar } from '@/components/layout/topbar'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -14,12 +14,42 @@ import { RotateCcw, LogOut, MessageCircle } from 'lucide-react'
 const allCategories = ['Crypto', 'Politics', 'Economics', 'Sports', 'Entertainment', 'Science', 'Climate']
 
 const riskModes = [
-  { id: 'conservative', label: 'Conservative', kelly: '0.25×', maxBet: '2%', desc: 'Quarter Kelly, very small bets' },
-  { id: 'moderate',     label: 'Moderate',     kelly: '0.5×',  maxBet: '5%', desc: 'Half Kelly, balanced approach' },
-  { id: 'aggressive',   label: 'Aggressive',   kelly: '1.0×',  maxBet: '10%', desc: 'Full Kelly, maximum growth' },
+  {
+    id: 'conservative',
+    label: 'Conservative',
+    kelly: '0.25×',
+    maxBet: '2%',
+    consequence: 'Smallest bets, slowest growth, lowest drawdown risk',
+  },
+  {
+    id: 'moderate',
+    label: 'Moderate',
+    kelly: '0.5×',
+    maxBet: '5%',
+    consequence: 'Balanced approach — recommended for new users',
+  },
+  {
+    id: 'aggressive',
+    label: 'Aggressive',
+    kelly: '1.0×',
+    maxBet: '10%',
+    consequence: 'Larger bets, faster gains, higher variance',
+  },
 ]
 
+function clonePrefs() {
+  return {
+    categories: [...mockUser.categories] as string[],
+    riskMode: mockUser.riskMode,
+    minEdge: '8',
+    minVolume: '1',
+    minDays: '1',
+    maxDays: '365',
+  }
+}
+
 export default function SettingsPage() {
+  const baseline = useRef(clonePrefs())
   const [categories, setCategories] = useState(mockUser.categories)
   const [riskMode, setRiskMode] = useState(mockUser.riskMode)
   const [minEdge, setMinEdge] = useState('8')
@@ -28,6 +58,29 @@ export default function SettingsPage() {
   const [maxDays, setMaxDays] = useState('365')
   const [changed, setChanged] = useState(false)
   const [showResetConfirm, setShowResetConfirm] = useState(false)
+
+  const resetChanges = () => {
+    const b = baseline.current
+    setCategories([...b.categories])
+    setRiskMode(b.riskMode)
+    setMinEdge(b.minEdge)
+    setMinVolume(b.minVolume)
+    setMinDays(b.minDays)
+    setMaxDays(b.maxDays)
+    setChanged(false)
+  }
+
+  const saveChanges = () => {
+    baseline.current = {
+      categories: [...categories],
+      riskMode,
+      minEdge,
+      minVolume,
+      minDays,
+      maxDays,
+    }
+    setChanged(false)
+  }
 
   const toggleCategory = (cat: string) => {
     const lower = cat.toLowerCase()
@@ -39,9 +92,9 @@ export default function SettingsPage() {
     <div className="flex flex-col flex-1">
       <Topbar title="Settings" subtitle="Configure your NightAgent preferences" />
 
-      <div className="p-6">
+      <div className="p-4 pb-32 sm:p-6 md:pb-6">
         <motion.div
-          className="max-w-2xl space-y-5"
+          className="mx-auto max-w-2xl space-y-5 md:mx-0"
           variants={staggerContainer}
           initial="hidden"
           animate="visible"
@@ -75,7 +128,7 @@ export default function SettingsPage() {
           <motion.div variants={staggerItem}>
             <Card className="p-5">
               <h3 className="text-sm font-semibold text-[var(--text-primary)] mb-4">Risk Mode</h3>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 {riskModes.map(mode => {
                   const active = riskMode === mode.id
                   return (
@@ -101,7 +154,7 @@ export default function SettingsPage() {
                           <span className={active ? 'text-[var(--accent-bright)]' : 'text-[var(--text-secondary)]'}>{mode.maxBet}</span>
                         </div>
                       </div>
-                      <p className="text-[10px] text-[var(--text-muted)] mt-2">{mode.desc}</p>
+                      <p className="mt-1 text-xs text-[var(--text-muted)]">{mode.consequence}</p>
                     </button>
                   )
                 })}
@@ -149,7 +202,7 @@ export default function SettingsPage() {
           <motion.div variants={staggerItem}>
             <Card className="p-5">
               <h3 className="text-sm font-semibold text-[var(--text-primary)] mb-4">Alert Filters</h3>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 {[
                   { label: 'Min Edge', value: minEdge, onChange: setMinEdge, suffix: '%', placeholder: '8' },
                   { label: 'Min Volume', value: minVolume, onChange: setMinVolume, prefix: '$', placeholder: '1', suffix: 'M' },
@@ -209,18 +262,30 @@ export default function SettingsPage() {
             </Card>
           </motion.div>
 
-          {/* Save button */}
-          {changed && (
-            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}>
-              <div className="sticky bottom-6 flex justify-end">
-                <Button variant="primary" size="md" onClick={() => setChanged(false)}>
-                  Save Changes
-                </Button>
-              </div>
-            </motion.div>
-          )}
         </motion.div>
       </div>
+
+      <AnimatePresence>
+        {changed && (
+          <motion.div
+            initial={{ y: 80, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 80, opacity: 0 }}
+            transition={{ duration: 0.2, ease: [0.0, 0.0, 0.2, 1] }}
+            className="fixed bottom-[calc(76px+env(safe-area-inset-bottom,0px))] left-0 right-0 z-50 flex flex-col gap-3 border-t border-[var(--border-bright)] bg-[var(--bg-secondary)]/90 px-4 py-4 backdrop-blur-md sm:flex-row sm:items-center sm:justify-between sm:px-6 md:bottom-0 md:left-[220px]"
+          >
+            <p className="text-sm text-[var(--text-secondary)]">You have unsaved changes</p>
+            <div className="flex gap-3">
+              <Button variant="ghost" size="sm" onClick={resetChanges}>
+                Discard
+              </Button>
+              <Button variant="primary" size="sm" onClick={saveChanges}>
+                Save Changes
+              </Button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }

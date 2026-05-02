@@ -10,7 +10,7 @@ interface ToggleProps {
 
 export function Toggle({ checked, onChange, label, description }: ToggleProps) {
   return (
-    <div className="flex items-center justify-between gap-4">
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
       {(label || description) && (
         <div>
           {label && <p className="text-sm text-[var(--text-primary)] font-medium">{label}</p>}

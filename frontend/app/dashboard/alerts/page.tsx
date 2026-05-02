@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Topbar } from '@/components/layout/topbar'
 import { Card } from '@/components/ui/card'
@@ -8,6 +8,7 @@ import { Toggle } from '@/components/ui/toggle'
 import { Tabs } from '@/components/ui/tabs'
 import { mockAlerts } from '@/data/mock'
 import { formatPct, formatTimeAgo } from '@/lib/utils'
+import { Tooltip } from '@/components/ui/tooltip'
 import { staggerContainer, tableRow } from '@/lib/animations'
 
 const confidenceVariant: Record<string, 'success' | 'warning' | 'muted'> = {
@@ -16,10 +17,16 @@ const confidenceVariant: Record<string, 'success' | 'warning' | 'muted'> = {
   low:    'muted',
 }
 
-const actionVariant: Record<string, 'success' | 'muted' | 'danger'> = {
-  bet_full: 'success',
-  bet_half: 'warning' as never,
-  skipped:  'muted',
+function categoryBadgeVariant(cat: string): 'accent' | 'warning' | 'success' | 'muted' {
+  if (cat === 'crypto') return 'accent'
+  if (cat === 'politics') return 'warning'
+  if (cat === 'economics') return 'success'
+  return 'muted'
+}
+
+function alertTypeLabel(alert: (typeof mockAlerts)[number]) {
+  if (alert.actionTaken.startsWith('bet')) return `BET ${alert.side}`
+  return 'SKIPPED'
 }
 
 export default function AlertsPage() {
@@ -28,6 +35,29 @@ export default function AlertsPage() {
   const [telegramOn, setTelegramOn] = useState(true)
   const [webNotif, setWebNotif] = useState(false)
   const [filterTab, setFilterTab] = useState('all')
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default')
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof Notification === 'undefined') return
+    setNotificationPermission(Notification.permission)
+  }, [])
+
+  const handleWebNotif = async (next: boolean) => {
+    if (typeof window === 'undefined') return
+    if (!next) {
+      setWebNotif(false)
+      return
+    }
+    if (typeof Notification === 'undefined') return
+
+    let permission = Notification.permission
+    if (permission === 'default') {
+      permission = await Notification.requestPermission()
+    }
+
+    setNotificationPermission(permission)
+    setWebNotif(permission === 'granted')
+  }
 
   const filtered = mockAlerts.filter(a => {
     if (filterTab === 'bet') return a.actionTaken.startsWith('bet')
@@ -39,13 +69,13 @@ export default function AlertsPage() {
     <div className="flex flex-col flex-1">
       <Topbar title="Alerts" subtitle="Alert history and notification settings" />
 
-      <div className="p-6 space-y-5">
+      <div className="space-y-5 p-4 pb-6 sm:p-6">
         {/* Settings card */}
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
-          <Card className="p-5">
-            <h3 className="text-sm font-semibold text-[var(--text-primary)] mb-5">Alert Settings</h3>
+          <Card className="p-4 sm:p-5">
+            <h3 className="mb-5 text-sm font-semibold text-[var(--text-primary)]">Alert Settings</h3>
 
-            <div className="grid grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
               {/* Max alerts per day */}
               <div>
                 <p className="text-xs text-[var(--text-muted)] uppercase tracking-wider mb-2">Max Alerts / Day</p>
@@ -100,10 +130,19 @@ export default function AlertsPage() {
               <div className="bg-[var(--bg-secondary)] rounded-xl p-4">
                 <Toggle
                   checked={webNotif}
-                  onChange={setWebNotif}
+                  onChange={handleWebNotif}
                   label="Web Notifications"
                   description="Browser push notifications"
                 />
+                {typeof Notification !== 'undefined' && notificationPermission === 'granted' && (
+                  <p className="mt-1 text-xs text-[var(--success)]">Browser notifications enabled ✓</p>
+                )}
+                {typeof Notification !== 'undefined' && notificationPermission === 'denied' && (
+                  <p className="mt-1 text-xs text-[var(--danger)]">Blocked by browser — check site settings</p>
+                )}
+                {typeof Notification !== 'undefined' && notificationPermission === 'default' && (
+                  <p className="mt-1 text-xs text-[var(--text-muted)]">Click to enable browser notifications</p>
+                )}
               </div>
             </div>
           </Card>
@@ -116,9 +155,10 @@ export default function AlertsPage() {
           transition={{ duration: 0.4, delay: 0.1 }}
         >
           <Card className="overflow-hidden">
-            <div className="flex items-center justify-between p-5 border-b border-[var(--border)]">
+            <div className="flex flex-col gap-3 border-b border-[var(--border)] p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
               <h3 className="text-sm font-semibold text-[var(--text-primary)]">Alert History</h3>
               <Tabs
+                className="w-full max-w-full sm:w-auto"
                 tabs={[
                   { id: 'all', label: 'All', count: mockAlerts.length },
                   { id: 'bet', label: 'Bet', count: mockAlerts.filter(a => a.actionTaken.startsWith('bet')).length },
@@ -129,10 +169,11 @@ export default function AlertsPage() {
               />
             </div>
 
-            <table className="w-full">
+            <div className="overflow-x-auto overscroll-x-contain">
+              <table className="w-full min-w-[720px]">
               <thead>
                 <tr className="border-b border-[var(--border)]">
-                  {['Time', 'Market', 'Category', 'Edge', 'EV', 'Confidence', 'Action', 'Key Factors'].map(h => (
+                  {['Time', 'Market', 'Category', 'Type', 'Confidence', 'Edge', 'Reason'].map(h => (
                     <th key={h} className="px-4 py-3 text-left text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -152,35 +193,31 @@ export default function AlertsPage() {
                       <p className="text-[10px] text-[var(--text-muted)] mt-0.5 truncate max-w-[180px]">{alert.reasoning}</p>
                     </td>
                     <td className="px-4 py-3">
-                      <span className="text-xs capitalize text-[var(--text-secondary)]">{alert.category}</span>
+                      <Badge variant={categoryBadgeVariant(alert.category)} size="sm" className="capitalize">
+                        {alert.category}
+                      </Badge>
                     </td>
-                    <td className="px-4 py-3 font-mono text-xs font-semibold text-[var(--accent-bright)]">
-                      {formatPct(alert.edge * 100, 0)}
-                    </td>
-                    <td className="px-4 py-3 font-mono text-xs text-[var(--text-secondary)]">
-                      {alert.ev >= 0 ? '+' : ''}{alert.ev.toFixed(2)}
+                    <td className="px-4 py-3 font-mono text-xs font-semibold text-[var(--text-secondary)]">
+                      {alertTypeLabel(alert)}
                     </td>
                     <td className="px-4 py-3">
                       <Badge variant={confidenceVariant[alert.confidence] || 'muted'} size="sm" className="capitalize">
                         {alert.confidence}
                       </Badge>
                     </td>
-                    <td className="px-4 py-3">
-                      <Badge variant={actionVariant[alert.actionTaken] || 'muted'} size="sm">
-                        {alert.actionTaken === 'bet_full' ? `BET ${alert.side}` : alert.actionTaken.toUpperCase()}
-                      </Badge>
+                    <td className="px-4 py-3 font-mono text-xs font-semibold text-[var(--accent-bright)]">
+                      {formatPct(alert.edge * 100, 0)}
                     </td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap gap-1">
-                        {alert.keyFactors.slice(0, 2).map(f => (
-                          <span key={f} className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--border)] text-[var(--text-muted)]">{f}</span>
-                        ))}
-                      </div>
+                    <td className="max-w-[220px] px-4 py-3">
+                      <Tooltip content={alert.reasoning}>
+                        <span className="block truncate text-xs text-[var(--text-muted)]">{alert.reasoning}</span>
+                      </Tooltip>
                     </td>
                   </motion.tr>
                 ))}
               </motion.tbody>
             </table>
+            </div>
           </Card>
         </motion.div>
       </div>

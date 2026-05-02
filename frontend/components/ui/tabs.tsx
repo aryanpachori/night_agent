@@ -16,7 +16,12 @@ interface TabsProps {
 
 export function Tabs({ tabs, active, onChange, className }: TabsProps) {
   return (
-    <div className={cn('flex gap-1 p-1 bg-[var(--bg-secondary)] rounded-lg border border-[var(--border)]', className)}>
+    <div
+      className={cn(
+        'flex max-w-full gap-1 overflow-x-auto rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
+        className
+      )}
+    >
       {tabs.map(tab => (
         <button
           key={tab.id}

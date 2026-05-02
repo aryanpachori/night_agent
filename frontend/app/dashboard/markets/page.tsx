@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Topbar } from '@/components/layout/topbar'
 import { MarketCard } from '@/components/markets/market-card'
@@ -12,6 +12,15 @@ export default function MarketsPage() {
   const [search, setSearch] = useState('')
   const [activeCategory, setActiveCategory] = useState('All')
 
+  const categoryCounts = useMemo(
+    () =>
+      mockMarkets.reduce<Record<string, number>>((acc, m) => {
+        acc[m.category] = (acc[m.category] || 0) + 1
+        return acc
+      }, {}),
+    []
+  )
+
   const filtered = mockMarkets.filter(m => {
     const matchSearch = m.question.toLowerCase().includes(search.toLowerCase())
     const matchCat = activeCategory === 'All' || m.category === activeCategory.toLowerCase()
@@ -22,15 +31,15 @@ export default function MarketsPage() {
     <div className="flex flex-col flex-1">
       <Topbar title="Markets" subtitle="Browse and analyze prediction markets" />
 
-      <div className="p-6 space-y-5">
+      <div className="space-y-5 p-4 pb-6 sm:p-6">
         {/* Search + filters */}
         <motion.div
-          className="flex items-center gap-3"
+          className="flex flex-col gap-4 xl:flex-row xl:items-center xl:gap-3"
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.35 }}
         >
-          <div className="relative flex-1 max-w-sm">
+          <div className="relative w-full max-w-none xl:max-w-sm xl:flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--text-muted)]" />
             <input
               value={search}
@@ -40,29 +49,35 @@ export default function MarketsPage() {
             />
           </div>
 
-          <div className="flex items-center gap-1.5">
-            {categories.map(cat => (
-              <button
-                key={cat}
-                onClick={() => setActiveCategory(cat)}
-                className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-all ${
-                  activeCategory === cat
-                    ? 'bg-[var(--accent-glow)] border-[var(--accent)]/40 text-[var(--accent-bright)]'
-                    : 'bg-[var(--bg-card)] border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:border-[var(--border-bright)]'
-                }`}
-              >
-                {cat}
-              </button>
-            ))}
+          <div className="flex flex-wrap items-center gap-1.5">
+            {categories.map(cat => {
+              const slug = cat.toLowerCase()
+              const displayCount = cat === 'All' ? mockMarkets.length : categoryCounts[slug] ?? 0
+              return (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => setActiveCategory(cat)}
+                  className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-all ${
+                    activeCategory === cat
+                      ? 'border-[var(--accent)]/40 bg-[var(--accent-glow)] text-[var(--accent-bright)]'
+                      : 'border-[var(--border)] bg-[var(--bg-card)] text-[var(--text-muted)] hover:border-[var(--border-bright)] hover:text-[var(--text-secondary)]'
+                  }`}
+                >
+                  {cat}{' '}
+                  <span className="ml-1 opacity-60">{displayCount}</span>
+                </button>
+              )
+            })}
           </div>
 
-          <div className="ml-auto text-xs text-[var(--text-muted)]">
+          <div className="text-xs text-[var(--text-muted)] xl:ml-auto xl:shrink-0">
             <span className="font-mono text-[var(--accent-bright)]">{filtered.length}</span> markets
           </div>
         </motion.div>
 
         {/* Market grid */}
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {filtered.map((market, index) => (
             <MarketCard key={market.id} market={market} index={index} />
           ))}

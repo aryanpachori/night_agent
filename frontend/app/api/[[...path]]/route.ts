@@ -1,6 +1,13 @@
 import type { NextRequest } from "next/server"
 import { NextResponse } from "next/server"
 
+/**
+ * Same-origin BFF: `POST https://<vercel>/api/auth/wallet` →
+ * `POST ${BACKEND_URL}/api/auth/wallet` (e.g. `http://52.66.114.179:4000/api/auth/wallet`).
+ * Set `BACKEND_URL` on Vercel (no trailing slash). Laptop→EC2 working does not imply
+ * Vercel→EC2 works until the EC2 security group allows public inbound on the API port.
+ */
+
 /** Node fetch needs this when forwarding a streamed request body. */
 type FetchWithDuplex = RequestInit & { duplex?: "half" }
 
@@ -29,6 +36,48 @@ function targetUrl(req: NextRequest, segments: string[]): URL {
   return new URL(`${backendBase()}${path}${req.nextUrl.search}`)
 }
 
+/** Undici/wrapped errors often omit `.code` on the top object — walk `cause` / AggregateError. */
+function describeUpstreamFailure(err: unknown): {
+  code: string
+  message: string
+  errno?: number
+} {
+  const pickCode = (x: unknown): string | undefined => {
+    if (x == null || typeof x !== "object") return undefined
+    const o = x as NodeJS.ErrnoException & {
+      cause?: unknown
+      errors?: unknown[]
+    }
+    if (typeof o.code === "string" && o.code.length > 0) return o.code
+    if (o.cause !== undefined) return pickCode(o.cause)
+    if (Array.isArray(o.errors)) {
+      for (const e of o.errors) {
+        const c = pickCode(e)
+        if (c) return c
+      }
+    }
+    return undefined
+  }
+
+  let code = pickCode(err) ?? "UNKNOWN"
+  let message = ""
+  let errno: number | undefined
+
+  if (err instanceof Error) {
+    message = err.message
+    if (code === "UNKNOWN" && err.name) code = err.name
+  } else {
+    message = String(err)
+  }
+
+  if (err && typeof err === "object" && "errno" in err) {
+    const n = Number((err as NodeJS.ErrnoException).errno)
+    if (!Number.isNaN(n)) errno = n
+  }
+
+  return { code, message: message.slice(0, 500), ...(errno !== undefined ? { errno } : {}) }
+}
+
 async function proxy(req: NextRequest, segments: string[]): Promise<NextResponse> {
   const target = targetUrl(req, segments)
   const headers = new Headers()
@@ -53,13 +102,14 @@ async function proxy(req: NextRequest, segments: string[]): Promise<NextResponse
   try {
     upstream = await fetch(target, init)
   } catch (err) {
-    const e = err as NodeJS.ErrnoException
-    console.error("[api proxy] fetch failed", target.toString(), err)
+    const diag = describeUpstreamFailure(err)
+    console.error("[api proxy] fetch failed", target.toString(), diag, err)
     return NextResponse.json(
       {
         error: "Upstream unavailable",
-        /** e.g. ECONNREFUSED = nothing listening or security group blocks Vercel → EC2 */
-        code: e?.code ?? "UNKNOWN",
+        ...diag,
+        /** Confirms which host `BACKEND_URL` / fallback resolved to at runtime */
+        origin: target.origin,
         path: `${target.pathname}${target.search}`,
       },
       { status: 502 },

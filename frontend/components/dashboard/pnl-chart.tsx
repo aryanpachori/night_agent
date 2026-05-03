@@ -1,26 +1,40 @@
-'use client'
+﻿'use client'
+
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { mockPnlHistory } from '@/data/mock'
 import { formatUSD } from '@/lib/utils'
 
-const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: Array<{ value: number }>; label?: string }) => {
+export type PnlChartPoint = { date: string; balance: number; pnl?: number }
+
+const CustomTooltip = ({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean
+  payload?: Array<{ value: number }>
+  label?: string
+}) => {
   if (!active || !payload?.length) return null
   const pnl = payload[0].value - 1000
   return (
-    <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-lg p-3 shadow-xl">
-      <p className="text-xs text-[var(--text-muted)] mb-1">{label}</p>
+    <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-3 shadow-xl">
+      <p className="mb-1 text-xs text-[var(--text-muted)]">{label}</p>
       <p className="text-sm font-mono font-bold text-[var(--text-primary)]">{formatUSD(payload[0].value)}</p>
-      <p className={`text-xs font-mono ${pnl >= 0 ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>
-        {pnl >= 0 ? '+' : ''}{formatUSD(pnl)}
+      <p className={`font-mono text-xs ${pnl >= 0 ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>
+        {pnl >= 0 ? '+' : ''}
+        {formatUSD(pnl)}
       </p>
     </div>
   )
 }
 
-export function PnlChart() {
+export function PnlChart({ data }: { data?: PnlChartPoint[] }) {
+  const chartData = data?.length ? data : mockPnlHistory
+
   return (
     <ResponsiveContainer width="100%" height={180}>
-      <AreaChart data={mockPnlHistory} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+      <AreaChart data={chartData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
         <defs>
           <linearGradient id="pnlGradient" x1="0" y1="0" x2="0" y2="1">
             <stop offset="5%" stopColor="#00C2FF" stopOpacity={0.25} />

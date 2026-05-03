@@ -1,11 +1,9 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { Pause, RotateCcw } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { Pause, Play } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-
-const SCAN_INTERVAL_SEC = 5 * 60
 
 function formatCountdown(totalSeconds: number) {
   const m = Math.floor(totalSeconds / 60)
@@ -13,18 +11,60 @@ function formatCountdown(totalSeconds: number) {
   return `${m}m ${s.toString().padStart(2, '0')}s`
 }
 
-export function BotStatusPanel() {
-  const [nextScanSec, setNextScanSec] = useState(154)
+export interface BotStatusPanelProps {
+  isActive?: boolean
+  isPaused?: boolean
+  lastScanAt?: string | null
+  marketsWatching?: number
+  alertsToday?: number
+  maxAlerts?: number
+  categories?: string[]
+  scanIntervalSeconds?: number
+  secondsSinceLastScan?: number | null
+  onPause?: () => void
+  pausePending?: boolean
+}
+
+export function BotStatusPanel({
+  isActive = false,
+  isPaused = false,
+  lastScanAt,
+  marketsWatching = 0,
+  alertsToday = 0,
+  maxAlerts = 3,
+  categories = [],
+  scanIntervalSeconds = 300,
+  secondsSinceLastScan,
+  onPause,
+  pausePending,
+}: BotStatusPanelProps) {
+  const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
-    const id = window.setInterval(() => {
-      setNextScanSec(prev => {
-        if (prev <= 1) return SCAN_INTERVAL_SEC
-        return prev - 1
-      })
-    }, 1000)
+    const id = window.setInterval(() => setNow(Date.now()), 1000)
     return () => window.clearInterval(id)
   }, [])
+
+  const remainingSec = useMemo(() => {
+    if (!lastScanAt) return scanIntervalSeconds
+    const last = new Date(lastScanAt).getTime()
+    if (Number.isNaN(last)) return scanIntervalSeconds
+    const elapsed = Math.floor((now - last) / 1000)
+    const mod = elapsed % scanIntervalSeconds
+    return Math.max(0, scanIntervalSeconds - mod)
+  }, [lastScanAt, scanIntervalSeconds, now])
+
+  const lastScanLabel =
+    secondsSinceLastScan != null
+      ? secondsSinceLastScan < 90
+        ? `${secondsSinceLastScan}s ago`
+        : `${Math.floor(secondsSinceLastScan / 60)}m ago`
+      : '—'
+
+  const categoriesLabel =
+    categories.length > 0 ? categories.map((c) => c.charAt(0).toUpperCase() + c.slice(1)).join(', ') : '—'
+
+  const alertPct = maxAlerts > 0 ? Math.min(100, (alertsToday / maxAlerts) * 100) : 0
 
   return (
     <Card className="flex flex-col gap-4 p-5">
@@ -33,27 +73,40 @@ export function BotStatusPanel() {
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <div className="flex items-center gap-2">
             <span className="relative flex h-2.5 w-2.5">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--success)] opacity-75" />
-              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[var(--success)]" />
+              {isActive && (
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--success)] opacity-75" />
+              )}
+              <span
+                className={`relative inline-flex h-2.5 w-2.5 rounded-full ${
+                  isActive ? 'bg-[var(--success)]' : 'bg-[var(--text-muted)]'
+                }`}
+              />
             </span>
-            <span className="text-sm font-medium text-[var(--success)]">Scanning markets</span>
+            <span
+              className={`text-sm font-medium ${isActive ? 'text-[var(--success)]' : 'text-[var(--text-muted)]'}`}
+            >
+              {isPaused ? 'Paused' : isActive ? 'Scanning markets' : 'Idle'}
+            </span>
           </div>
-          <span className="text-xs text-[var(--text-muted)]">
-            Next scan in <span className="font-mono text-[var(--text-secondary)]">{formatCountdown(nextScanSec)}</span>
-          </span>
+          {!isPaused && (
+            <span className="text-xs text-[var(--text-muted)]">
+              Next scan in{' '}
+              <span className="font-mono text-[var(--text-secondary)]">{formatCountdown(remainingSec)}</span>
+            </span>
+          )}
         </div>
       </div>
 
       <div className="space-y-2.5 text-xs">
         {[
-          ['Last scan', '2 minutes ago'],
-          ['Markets watching', '847'],
-          ['Alerts today', '3 / 3'],
-          ['Categories', 'Crypto, Politics'],
+          ['Last scan', lastScanLabel],
+          ['Markets watching', String(marketsWatching)],
+          ['Alerts today', `${alertsToday} / ${maxAlerts}`],
+          ['Categories', categoriesLabel],
         ].map(([label, value]) => (
-          <div key={label} className="flex justify-between">
+          <div key={label} className="flex justify-between gap-2">
             <span className="text-[var(--text-muted)]">{label}</span>
-            <span className="font-mono text-[var(--text-secondary)]">{value}</span>
+            <span className="text-right font-mono text-[var(--text-secondary)]">{value}</span>
           </div>
         ))}
       </div>
@@ -61,19 +114,25 @@ export function BotStatusPanel() {
       <div>
         <div className="mb-1 flex justify-between text-[10px] text-[var(--text-muted)]">
           <span>Daily alerts used</span>
-          <span>3/3</span>
+          <span>
+            {alertsToday}/{maxAlerts}
+          </span>
         </div>
         <div className="h-1.5 rounded-full bg-[var(--border)]">
-          <div className="h-full w-full rounded-full bg-[var(--accent)]" />
+          <div className="h-full rounded-full bg-[var(--accent)] transition-all" style={{ width: `${alertPct}%` }} />
         </div>
       </div>
 
       <div className="mt-auto flex flex-wrap gap-2">
-        <Button variant="secondary" size="sm" icon={<Pause className="h-3 w-3" />} className="flex-1">
-          Pause
-        </Button>
-        <Button variant="ghost" size="sm" icon={<RotateCcw className="h-3 w-3" />}>
-          Reset
+        <Button
+          variant="secondary"
+          size="sm"
+          icon={isPaused ? <Play className="h-3 w-3" /> : <Pause className="h-3 w-3" />}
+          className="flex-1"
+          disabled={pausePending}
+          onClick={() => onPause?.()}
+        >
+          {isPaused ? 'Resume' : 'Pause'}
         </Button>
       </div>
     </Card>

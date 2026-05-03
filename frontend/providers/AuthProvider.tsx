@@ -80,28 +80,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const loginWithTelegram = useCallback(
     async (telegramData: Record<string, unknown>) => {
-      const { data } = await api.post<{ token: string; user: AuthUser }>('/api/auth/telegram', telegramData)
+      const { data } = await api.post<{ token: string }>('/api/auth/telegram', telegramData)
       localStorage.setItem('nightagent_token', data.token)
       setToken(data.token)
-      setUser(data.user)
+      await fetchMe()
       await qc.invalidateQueries()
     },
-    [qc],
+    [qc, fetchMe],
   )
 
   const loginWithWallet = useCallback(
     async (publicKey: string, signature: string, message: string) => {
-      const { data } = await api.post<{ token: string; user: AuthUser }>('/api/auth/wallet', {
+      const { data } = await api.post<{ token: string }>('/api/auth/wallet', {
         publicKey,
         signature,
         message,
       })
       localStorage.setItem('nightagent_token', data.token)
       setToken(data.token)
-      setUser(data.user)
+      await fetchMe()
       await qc.invalidateQueries()
     },
-    [qc],
+    [qc, fetchMe],
   )
 
   const logout = useCallback(async () => {

@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('crypto');
 const {
   opportunityMessage,
   exitOpportunityMessage,
@@ -11,37 +12,57 @@ const {
   manualExitKeyboardRow,
 } = require('./messages');
 const wallet = require('../wallet/paperWallet');
+const { getPrisma } = require('../db/client');
 
 let _bot = null;
 const chatId = () => process.env.TELEGRAM_CHAT_ID;
 
-function setBot(bot) { _bot = bot; }
+function setBot(bot) {
+  _bot = bot;
+}
 
-async function send(text, extra = {}) {
-  if (!_bot) { console.warn('[alerts] Bot not initialised'); return null; }
+async function sendToChat(targetChatId, text, extra = {}) {
+  if (!_bot) {
+    console.warn('[alerts] Bot not initialised');
+    return null;
+  }
   try {
-    return await _bot.sendMessage(chatId(), text, { parse_mode: 'MarkdownV2', ...extra });
+    return await _bot.sendMessage(String(targetChatId), text, { parse_mode: 'MarkdownV2', ...extra });
   } catch (err) {
     console.error(`[alerts] Send failed: ${err.message}`);
     return null;
   }
 }
 
+async function send(text, extra = {}) {
+  return sendToChat(chatId(), text, extra);
+}
+
+function newOpportunityToken() {
+  return crypto.randomBytes(12).toString('base64url');
+}
+
 // ─── Pending opportunity state ────────────────────────────────────────────────
-// marketId → pending opportunity data (so inline buttons can execute the bet)
+// Opaque token → pending data (inline `callback_data` must stay short; market ids can be long).
 const pendingOpportunities = new Map();
 
-function setPendingOpportunity(marketId, data) {
-  pendingOpportunities.set(marketId, data);
-  setTimeout(() => pendingOpportunities.delete(marketId), 10 * 60 * 1000); // 10 min expiry
+function setPendingOpportunity(token, data) {
+  pendingOpportunities.set(token, data);
+  setTimeout(() => pendingOpportunities.delete(token), 10 * 60 * 1000);
 }
 
-function getPendingOpportunity(marketId) {
-  return pendingOpportunities.get(marketId) ?? null;
+function getPendingOpportunity(token) {
+  return pendingOpportunities.get(token) ?? null;
 }
 
+/** Focus cap: count distinct markets with a pending opportunity alert. */
 function getPendingOpportunityCount() {
-  return pendingOpportunities.size;
+  const ids = new Set();
+  for (const p of pendingOpportunities.values()) {
+    const mid = p.market?.id ?? p.marketId;
+    if (mid) ids.add(mid);
+  }
+  return ids.size;
 }
 
 // ─── Pending exit state ───────────────────────────────────────────────────────
@@ -56,30 +77,71 @@ function getPendingExit(positionId) {
   return pendingExits.get(positionId) ?? null;
 }
 
-// ─── sendOpportunityAlert ─────────────────────────────────────────────────────
-async function sendOpportunityAlert(market, analysis, kellyFraction, betAmount, balance) {
-  const entryPrice     = analysis.effectivePrice || market.yesPrice;
-  const contracts      = Math.floor(betAmount / entryPrice);
-  const halfBetAmount  = betAmount / 2;
-  const halfContracts  = Math.floor(halfBetAmount / entryPrice);
-  const edge           = analysis.probability - market.yesPrice;
-  const ev             = (analysis.probability * (1 - market.yesPrice)) - ((1 - analysis.probability) * market.yesPrice);
+async function recordAlertRow(user, market, analysis, kellyData) {
+  const prisma = getPrisma();
+  if (!prisma || !user?.id) return;
+  try {
+    const conf = String(analysis.confidence || 'medium').toLowerCase();
+    await prisma.alert.create({
+      data: {
+        userId: user.id,
+        marketId: market.id,
+        marketQuestion: market.question || '',
+        category: market.category ?? 'crypto',
+        marketPrice: market.yesPrice,
+        myProbability: analysis.probability,
+        edge: kellyData.edge,
+        ev: kellyData.ev,
+        confidence: ['high', 'medium', 'low'].includes(conf) ? conf : 'medium',
+        reasoning: analysis.reasoning || '',
+        keyFactors: Array.isArray(analysis.keyFactors) ? analysis.keyFactors : [],
+        suggestedAmount: kellyData.betAmount,
+        suggestedContracts: kellyData.contracts,
+        side: analysis.side,
+        sentViaTelegram: true,
+      },
+    });
+  } catch (err) {
+    console.error('[alerts] Failed to store alert row:', err.message);
+  }
+}
 
-  const kellyData = { betAmount, contracts, entryPrice, halfBetAmount, halfContracts };
+/**
+ * @param {object} [opts]
+ * @param {object} [opts.user] — Prisma user row (`id`, `telegramId`) for multi-tenant Telegram + DB alert
+ * @param {boolean} [opts.deferWalletMark] — if true, caller must call `wallet.markMarketAlerted(market.id)`
+ */
+async function sendOpportunityAlert(market, analysis, kellyFraction, betAmount, balance, opts = {}) {
+  const { user = null, deferWalletMark = false } = opts;
+
+  const entryPrice = analysis.effectivePrice || market.yesPrice;
+  const contracts = Math.floor(betAmount / entryPrice);
+  const halfBetAmount = betAmount / 2;
+  const halfContracts = Math.floor(halfBetAmount / entryPrice);
+  const edge = analysis.probability - market.yesPrice;
+  const ev =
+    analysis.probability * (1 - market.yesPrice) - (1 - analysis.probability) * market.yesPrice;
+
+  const kellyData = { betAmount, contracts, entryPrice, halfBetAmount, halfContracts, edge, ev };
   const text = opportunityMessage(market, analysis, kellyData);
 
+  const token = newOpportunityToken();
   const reply_markup = {
     inline_keyboard: [
       [
-        { text: `BET ${analysis.side} full $${betAmount.toFixed(0)}`, callback_data: `bet:${market.id}:full` },
-        { text: `BET half $${halfBetAmount.toFixed(0)}`, callback_data: `bet:${market.id}:half` },
+        { text: `BET ${analysis.side} full $${betAmount.toFixed(0)}`, callback_data: `bet:${token}:full` },
+        { text: `BET half $${halfBetAmount.toFixed(0)}`, callback_data: `bet:${token}:half` },
       ],
-      [{ text: 'SKIP', callback_data: `bet:${market.id}:skip` }],
+      [{ text: 'SKIP', callback_data: `bet:${token}:skip` }],
     ],
   };
 
-  setPendingOpportunity(market.id, {
+  const targetChat = user?.telegramId != null ? String(user.telegramId) : chatId();
+  const telegramChatId = String(targetChat);
+
+  setPendingOpportunity(token, {
     market,
+    marketId: market.id,
     analysis,
     kellyFraction,
     betAmount,
@@ -89,11 +151,17 @@ async function sendOpportunityAlert(market, analysis, kellyFraction, betAmount, 
     entryPrice,
     edge,
     ev,
+    telegramChatId,
+    userId: user?.id ?? null,
     expiresAt: Date.now() + 10 * 60 * 1000,
   });
 
-  wallet.markMarketAlerted(market.id);
-  await send(text, { reply_markup });
+  if (!deferWalletMark) {
+    wallet.markMarketAlerted(market.id);
+  }
+
+  await sendToChat(targetChat, text, { reply_markup });
+  await recordAlertRow(user, market, analysis, kellyData);
 }
 
 // ─── sendExitAlert — take profit / negative edge: manual buttons only (no auto\\-close on profit) ─
@@ -138,7 +206,6 @@ async function sendResolvedAlert(position, won) {
 
 // ─── sendRawMessage ───────────────────────────────────────────────────────────
 async function sendRawMessage(text) {
-  // Plain text send — escape for MarkdownV2
   const { esc } = require('./messages');
   await send(esc(text));
 }

@@ -6,25 +6,33 @@ import type { LucideIcon } from 'lucide-react'
 import { LayoutDashboard, TrendingUp, Bell, Globe, Settings, LogOut } from 'lucide-react'
 import { NightAgentLogoMark } from '@/components/brand/night-agent-logo-mark'
 import { cn } from '@/lib/utils'
-import { mockUser, mockWallet } from '@/data/mock'
+import { useAuth } from '@/hooks/useAuth'
+import { useBotStatus } from '@/hooks/useStats'
 
 export type DashboardNavItem = {
   href: string
   icon: LucideIcon
   label: string
-  badge?: string
 }
 
 export const dashboardNavItems: DashboardNavItem[] = [
   { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-  { href: '/dashboard/positions', icon: TrendingUp, label: 'Positions', badge: '3' },
-  { href: '/dashboard/alerts', icon: Bell, label: 'Alerts', badge: '3' },
+  { href: '/dashboard/positions', icon: TrendingUp, label: 'Positions' },
+  { href: '/dashboard/alerts', icon: Bell, label: 'Alerts' },
   { href: '/dashboard/markets', icon: Globe, label: 'Markets' },
   { href: '/dashboard/settings', icon: Settings, label: 'Settings' },
 ]
 
 export function Sidebar() {
   const pathname = usePathname()
+  const { user, logout } = useAuth()
+  const { data: bot } = useBotStatus()
+
+  const displayName = user?.firstName || user?.username || user?.walletAddress?.slice(0, 6) || 'Trader'
+  const initial =
+    (user?.firstName?.[0] || user?.username?.[0] || user?.walletAddress?.[0] || '?').toUpperCase()
+  const balance = user?.wallet?.balance ?? 0
+  const scanning = bot?.isActive ?? false
 
   return (
     <aside className="fixed left-0 top-0 z-50 hidden h-screen w-[220px] flex-col border-r border-[var(--border)] bg-[var(--bg-secondary)] md:flex">
@@ -41,18 +49,39 @@ export function Sidebar() {
 
       {/* Bot status pill */}
       <div className="px-4 py-3 border-b border-[var(--border)]">
-        <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[var(--success-dim)] border border-[var(--success)]/30">
+        <div
+          className={cn(
+            'flex items-center gap-2 px-2.5 py-1.5 rounded-lg border',
+            scanning
+              ? 'bg-[var(--success-dim)] border-[var(--success)]/30'
+              : 'bg-[var(--bg-card)] border-[var(--border)]',
+          )}
+        >
           <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--success)] opacity-75" />
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-[var(--success)]" />
+            {scanning && (
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--success)] opacity-75" />
+            )}
+            <span
+              className={cn(
+                'relative inline-flex rounded-full h-2 w-2',
+                scanning ? 'bg-[var(--success)]' : 'bg-[var(--text-muted)]',
+              )}
+            />
           </span>
-          <span className="text-xs font-medium text-[var(--success)]">Scanning markets</span>
+          <span
+            className={cn(
+              'text-xs font-medium',
+              scanning ? 'text-[var(--success)]' : 'text-[var(--text-muted)]',
+            )}
+          >
+            {scanning ? 'Scanning markets' : bot?.isPaused ? 'Paused' : 'Idle'}
+          </span>
         </div>
       </div>
 
       {/* Nav items */}
       <nav className="flex-1 p-3 space-y-0.5">
-        {dashboardNavItems.map(({ href, icon: Icon, label, badge }) => {
+        {dashboardNavItems.map(({ href, icon: Icon, label }) => {
           const isActive = pathname === href || (href !== '/dashboard' && pathname.startsWith(href))
           return (
             <Link
@@ -84,11 +113,6 @@ export function Sidebar() {
                 isActive ? 'text-[var(--accent)]' : 'text-[var(--text-muted)] group-hover:text-[var(--text-secondary)]'
               )} />
               <span className="flex-1 relative z-10">{label}</span>
-              {badge && (
-                <span className="relative z-10 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[var(--accent-glow)] text-[var(--accent-bright)]">
-                  {badge}
-                </span>
-              )}
             </Link>
           )
         })}
@@ -97,15 +121,20 @@ export function Sidebar() {
       {/* User section */}
       <div className="p-3 border-t border-[var(--border)]">
         <div className="flex items-center gap-2.5 px-2 py-2">
-          <div className="w-7 h-7 rounded-full bg-gradient-to-br from-[var(--accent)] to-[var(--accent-dim)] flex items-center justify-center text-[var(--bg-primary)] text-xs font-bold flex-shrink-0">
-            {mockUser.firstName[0]}
+          <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[var(--accent)] to-[var(--accent-dim)] text-xs font-bold text-[var(--bg-primary)]">
+            {initial}
           </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-xs font-medium text-[var(--text-primary)] truncate">{mockUser.firstName}</p>
-            <p className="text-[10px] text-[var(--text-muted)] font-mono truncate">${mockWallet.balance.toFixed(2)}</p>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-xs font-medium text-[var(--text-primary)]">{displayName}</p>
+            <p className="truncate font-mono text-[10px] text-[var(--text-muted)]">${balance.toFixed(2)}</p>
           </div>
-          <button className="text-[var(--text-muted)] hover:text-[var(--danger)] transition-colors">
-            <LogOut className="w-3.5 h-3.5" />
+          <button
+            type="button"
+            onClick={() => void logout()}
+            className="text-[var(--text-muted)] transition-colors hover:text-[var(--danger)]"
+            aria-label="Sign out"
+          >
+            <LogOut className="h-3.5 w-3.5" />
           </button>
         </div>
       </div>

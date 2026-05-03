@@ -1,4 +1,5 @@
 'use client'
+
 import { motion } from 'framer-motion'
 import { Wallet, TrendingUp, Target, Activity } from 'lucide-react'
 import { Topbar } from '@/components/layout/topbar'
@@ -8,7 +9,13 @@ import { BotStatusPanel } from '@/components/dashboard/bot-status-panel'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Tooltip } from '@/components/ui/tooltip'
-import { mockWallet, mockPositions, mockAlerts } from '@/data/mock'
+import DashboardSkeleton from '@/app/dashboard/loading'
+import { useSummaryStats, useBotStatus } from '@/hooks/useStats'
+import { useWalletHistory } from '@/hooks/useWallet'
+import { usePositions } from '@/hooks/usePositions'
+import { useAlerts } from '@/hooks/useAlerts'
+import { usePauseBot } from '@/hooks/useAuth'
+import { normalizeOpenPosition, type UiOpenPosition } from '@/lib/normalize-position'
 import { formatUSD, formatPct, formatPrice, formatTimeAgo } from '@/lib/utils'
 
 const fadeUp = {
@@ -16,19 +23,39 @@ const fadeUp = {
   animate: { opacity: 1, y: 0 },
 }
 
-function currentPriceTrend(pos: (typeof mockPositions)[number]): 'up' | 'down' {
+function currentPriceTrend(pos: UiOpenPosition): 'up' | 'down' {
   if (pos.side === 'YES') return pos.currentPrice >= pos.entryPrice ? 'up' : 'down'
   return pos.currentPrice <= pos.entryPrice ? 'up' : 'down'
 }
 
 export default function DashboardPage() {
+  const { data: stats, isLoading: statsLoading } = useSummaryStats()
+  const { data: walletHistory } = useWalletHistory()
+  const { data: positionsData } = usePositions('open')
+  const { data: alertsData } = useAlerts('all', 5)
+  const { data: botStatus } = useBotStatus()
+  const pauseBot = usePauseBot()
+
+  const openPositions: UiOpenPosition[] = (positionsData?.positions ?? []).map((row: Record<string, unknown>) =>
+    normalizeOpenPosition(row),
+  )
+
+  if (statsLoading || !stats) {
+    return (
+      <div className="flex flex-1 flex-col">
+        <Topbar title="Dashboard" subtitle="Paper trading overview" />
+        <DashboardSkeleton />
+      </div>
+    )
+  }
+
+  const brier = stats.avgBrierScore
+
   return (
-    <div className="flex flex-col flex-1">
+    <div className="flex flex-1 flex-col">
       <Topbar title="Dashboard" subtitle="Paper trading overview" />
 
       <div className="space-y-6 p-4 pb-6 sm:p-6">
-
-        {/* Stat cards */}
         <motion.div
           className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4"
           initial={fadeUp.initial}
@@ -38,24 +65,24 @@ export default function DashboardPage() {
           <StatCard
             icon={Wallet}
             label="Paper Balance"
-            value={formatUSD(mockWallet.balance)}
-            change={formatPct(mockWallet.roi)}
-            changePositive={mockWallet.totalPnl >= 0}
-            subtitle="Starting $1,000"
+            value={formatUSD(stats.balance)}
+            change={formatPct(stats.roi)}
+            changePositive={stats.totalPnl >= 0}
+            subtitle={`Starting ${formatUSD(stats.startingBalance)}`}
             glow
           />
           <StatCard
             icon={TrendingUp}
             label="Total P&L"
-            value={formatUSD(mockWallet.totalPnl)}
-            change={formatPct(mockWallet.roi)}
-            changePositive={mockWallet.totalPnl >= 0}
+            value={formatUSD(stats.totalPnl)}
+            change={formatPct(stats.roi)}
+            changePositive={stats.totalPnl >= 0}
           />
           <StatCard
             icon={Target}
             label="Win Rate"
-            value={`${mockWallet.winRate}%`}
-            subtitle={`${mockWallet.wins}W / ${mockWallet.losses}L`}
+            value={`${stats.winRate}%`}
+            subtitle={`${stats.wins}W / ${stats.losses}L`}
           />
           <Card className="p-5">
             <div className="mb-3 flex items-start justify-between">
@@ -65,7 +92,7 @@ export default function DashboardPage() {
             </div>
             <div className="mb-1 flex items-center gap-1">
               <p className="text-xs uppercase tracking-wider text-[var(--text-muted)]">Brier Score</p>
-              <Tooltip content="Brier Score measures probability calibration. 0.0 = perfect, 0.25 = random guessing. Our model scores 0.11 — roughly 3× better than chance.">
+              <Tooltip content="Brier Score measures probability calibration. 0.0 = perfect, 0.25 = random guessing. Lower is better.">
                 <button
                   type="button"
                   className="text-[10px] leading-none text-[var(--text-muted)] hover:text-[var(--accent)]"
@@ -81,13 +108,12 @@ export default function DashboardPage() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.4 }}
             >
-              {mockWallet.brierScore.toFixed(2)}
+              {brier != null ? brier.toFixed(2) : '—'}
             </motion.p>
             <p className="mt-1 text-xs text-[var(--text-muted)]">Model accuracy — lower is better (perfect = 0)</p>
           </Card>
         </motion.div>
 
-        {/* Chart + Bot Status */}
         <motion.div
           className="grid grid-cols-1 gap-4 lg:grid-cols-3"
           initial={fadeUp.initial}
@@ -100,83 +126,115 @@ export default function DashboardPage() {
                 <h3 className="text-sm font-semibold text-[var(--text-primary)]">Portfolio Performance</h3>
                 <p className="text-xs text-[var(--text-muted)]">30-day paper trading balance</p>
               </div>
-              <Badge variant="success">+{formatPct(mockWallet.roi)}</Badge>
+              <Badge variant="success">{formatPct(stats.roi)}</Badge>
             </div>
-            <PnlChart />
+            <PnlChart data={walletHistory?.history} />
           </Card>
 
-          <BotStatusPanel />
+          <BotStatusPanel
+            isActive={botStatus?.isActive}
+            isPaused={botStatus?.isPaused}
+            lastScanAt={botStatus?.lastScanAt}
+            marketsWatching={botStatus?.marketsWatching}
+            alertsToday={stats.alertsTodayCount}
+            maxAlerts={stats.maxAlertsPerDay}
+            categories={stats.categories}
+            scanIntervalSeconds={botStatus?.scanIntervalSeconds}
+            secondsSinceLastScan={botStatus?.secondsSinceLastScan}
+            onPause={() => pauseBot.mutate(undefined)}
+            pausePending={pauseBot.isPending}
+          />
         </motion.div>
 
-        {/* Positions + Recent Alerts */}
         <motion.div
           className="grid grid-cols-1 gap-4 xl:grid-cols-2"
           initial={fadeUp.initial}
           animate={fadeUp.animate}
           transition={{ duration: 0.4, delay: 0.2 }}
         >
-          {/* Active positions */}
           <Card className="p-5">
-            <h3 className="text-sm font-semibold text-[var(--text-primary)] mb-4">Open Positions ({mockPositions.length})</h3>
+            <h3 className="mb-4 text-sm font-semibold text-[var(--text-primary)]">
+              Open Positions ({openPositions.length})
+            </h3>
             <div className="space-y-2">
-              {mockPositions.map(pos => {
+              {openPositions.map((pos) => {
                 const pnlPositive = pos.pnl >= 0
                 const favorable = currentPriceTrend(pos) === 'up'
                 return (
-                  <div key={pos.id} className="flex flex-col gap-2 rounded-lg bg-[var(--bg-secondary)] p-3 transition-colors hover:bg-[var(--bg-card-hover)] sm:flex-row sm:items-center sm:gap-3">
+                  <div
+                    key={pos.id}
+                    className="flex flex-col gap-2 rounded-lg bg-[var(--bg-secondary)] p-3 transition-colors hover:bg-[var(--bg-card-hover)] sm:flex-row sm:items-center sm:gap-3"
+                  >
                     <Badge variant={pos.side === 'YES' ? 'success' : 'danger'} size="sm" className="w-fit shrink-0">
                       {pos.side}
                     </Badge>
                     <div className="min-w-0 flex-1">
-                      <p className="text-xs text-[var(--text-primary)] truncate">{pos.marketQuestion}</p>
+                      <p className="truncate text-xs text-[var(--text-primary)]">{pos.marketQuestion}</p>
                       <p className="text-[10px] text-[var(--text-muted)]">
-                        {pos.contracts} contracts · Entry {formatPrice(pos.entryPrice)}{' '}
-                        · Now{' '}
-                        <span className={`font-mono font-semibold ${favorable ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>
+                        {pos.contracts} contracts · Entry {formatPrice(pos.entryPrice)} · Now{' '}
+                        <span
+                          className={`font-mono font-semibold ${favorable ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}
+                        >
                           {favorable ? '↑' : '↓'} {formatPrice(pos.currentPrice)}
                         </span>
                       </p>
                     </div>
                     <div className="ml-auto shrink-0 border-t border-[var(--border)] pt-2 text-right sm:border-t-0 sm:pt-0">
-                      <p className={`text-xs font-mono font-semibold ${pnlPositive ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>
-                        {pnlPositive ? '+' : ''}{formatUSD(pos.pnl)}
+                      <p
+                        className={`font-mono text-xs font-semibold ${pnlPositive ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}
+                      >
+                        {pnlPositive ? '+' : ''}
+                        {formatUSD(pos.pnl)}
                       </p>
-                      <p className={`text-[10px] font-mono ${pnlPositive ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>
+                      <p
+                        className={`font-mono text-[10px] ${pnlPositive ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}
+                      >
                         {formatPct(pos.pnlPercent)}
                       </p>
                     </div>
                   </div>
                 )
               })}
+              {openPositions.length === 0 && (
+                <p className="text-xs text-[var(--text-muted)]">No open positions — browse Markets to trade.</p>
+              )}
             </div>
           </Card>
 
-          {/* Recent alerts */}
           <Card className="p-5">
-            <h3 className="text-sm font-semibold text-[var(--text-primary)] mb-4">Recent Alerts</h3>
+            <h3 className="mb-4 text-sm font-semibold text-[var(--text-primary)]">Recent Alerts</h3>
             <div className="space-y-2">
-              {mockAlerts.map(alert => {
-                const isBet = alert.actionTaken?.startsWith('bet')
+              {(alertsData?.alerts ?? []).map((alert: Record<string, unknown>) => {
+                const action = String(alert.actionTaken ?? '')
+                const isBet = action.startsWith('bet')
+                const createdAt = alert.createdAt ? new Date(String(alert.createdAt)) : new Date()
+                const edge = Number(alert.edge ?? 0)
                 return (
-                  <div key={alert.id} className="flex items-start gap-3 p-3 rounded-lg bg-[var(--bg-secondary)]">
-                    <div className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${isBet ? 'bg-[var(--success)]' : 'bg-[var(--text-muted)]'}`} />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs text-[var(--text-primary)] truncate">{alert.marketQuestion}</p>
-                      <div className="flex items-center gap-1.5 mt-0.5">
+                  <div key={String(alert.id)} className="flex items-start gap-3 rounded-lg bg-[var(--bg-secondary)] p-3">
+                    <div
+                      className={`mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full ${isBet ? 'bg-[var(--success)]' : 'bg-[var(--text-muted)]'}`}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs text-[var(--text-primary)]">{String(alert.marketQuestion ?? '')}</p>
+                      <div className="mt-0.5 flex items-center gap-1.5">
                         <Badge variant={isBet ? 'success' : 'muted'} size="sm">
-                          {isBet ? `BET ${alert.side}` : 'SKIPPED'}
+                          {isBet ? `BET ${String(alert.side ?? '')}` : 'SKIPPED'}
                         </Badge>
-                        <span className="text-[10px] text-[var(--text-muted)]">Edge {formatPct(alert.edge * 100, 0)}</span>
+                        <span className="text-[10px] text-[var(--text-muted)]">Edge {formatPct(edge * 100, 0)}</span>
                       </div>
                     </div>
-                    <span className="text-[10px] text-[var(--text-muted)] flex-shrink-0">{formatTimeAgo(alert.createdAt)}</span>
+                    <span className="flex-shrink-0 text-[10px] text-[var(--text-muted)]">
+                      {formatTimeAgo(createdAt)}
+                    </span>
                   </div>
                 )
               })}
+              {(alertsData?.alerts ?? []).length === 0 && (
+                <p className="text-xs text-[var(--text-muted)]">No alerts yet.</p>
+              )}
             </div>
           </Card>
         </motion.div>
-
       </div>
     </div>
   )

@@ -78,10 +78,12 @@ async function startApiServer() {
 
   const app = createApiServer();
   const port = Number(process.env.API_PORT) || 4000;
+  /** Default `0.0.0.0` so `http://127.0.0.1:PORT` and `http://localhost:PORT` both work reliably on Windows. */
+  const host = process.env.API_HOST || '0.0.0.0';
 
   return new Promise(resolve => {
-    const server = app.listen(port, () => {
-      console.log(`[api] REST API listening on port ${port}`);
+    const server = app.listen(port, host, () => {
+      console.log(`[api] REST API listening on http://${host}:${port}`);
       resolve(server);
     });
   });

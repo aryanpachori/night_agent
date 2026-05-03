@@ -1,12 +1,14 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { Shield, TestTube2, Clock } from 'lucide-react'
-import { useWallet } from '@solana/wallet-adapter-react'
+import { useWallet as useSolanaWallet } from '@solana/wallet-adapter-react'
 import { useWalletModal } from '@solana/wallet-adapter-react-ui'
+import toast from 'react-hot-toast'
 import { NightAgentLogoMark } from '@/components/brand/night-agent-logo-mark'
+import { useAuth } from '@/hooks/useAuth'
 
 function TelegramIcon({ className }: { className?: string }) {
   return (
@@ -18,7 +20,17 @@ function TelegramIcon({ className }: { className?: string }) {
 
 function WalletIcon({ className }: { className?: string }) {
   return (
-    <svg className={className} width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+      className={className}
+      width={20}
+      height={20}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
       <path d="M21 12V7H5a2 2 0 0 1 0-4h14v4" />
       <path d="M3 5v14a2 2 0 0 0 2 2h16v-5" />
       <path d="M18 12a2 2 0 0 0 0 4h4v-4Z" />
@@ -26,16 +38,83 @@ function WalletIcon({ className }: { className?: string }) {
   )
 }
 
+function bytesToBase64(bytes: Uint8Array): string {
+  let bin = ''
+  bytes.forEach((b) => {
+    bin += String.fromCharCode(b)
+  })
+  return btoa(bin)
+}
+
 export default function LoginPage() {
   const router = useRouter()
   const { setVisible } = useWalletModal()
-  const { connected } = useWallet()
+  const { publicKey, signMessage, connected } = useSolanaWallet()
+  const { loginWithTelegram, loginWithWallet, user, isLoading } = useAuth()
+  const tgMountRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    if (connected) {
-      router.push('/dashboard')
+    if (!isLoading && user) {
+      router.replace('/dashboard')
     }
-  }, [connected, router])
+  }, [user, isLoading, router])
+
+  const handleTelegramPlaceholder = () => {
+    toast.error('Set NEXT_PUBLIC_TELEGRAM_BOT_USERNAME or use wallet login.')
+  }
+
+  const handleWalletLogin = async () => {
+    if (!publicKey || !signMessage) {
+      toast.error('Connect a wallet that supports message signing.')
+      return
+    }
+    try {
+      const message = `NightAgent Login\nWallet: ${publicKey.toString()}\nTimestamp: ${Date.now()}`
+      const encoded = new TextEncoder().encode(message)
+      const signature = await signMessage(encoded)
+      await loginWithWallet(publicKey.toString(), bytesToBase64(signature), message)
+      router.push('/dashboard')
+    } catch {
+      toast.error('Wallet sign-in failed')
+    }
+  }
+
+  const onTelegramAuth = useCallback(
+    async (telegramUser: Record<string, unknown>) => {
+      try {
+        await loginWithTelegram(telegramUser)
+        router.push('/dashboard')
+      } catch {
+        toast.error('Telegram sign-in failed')
+      }
+    },
+    [loginWithTelegram, router],
+  )
+
+  useEffect(() => {
+    const bot = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME
+    if (!bot || typeof window === 'undefined') return
+
+    ;(window as Window & { onTelegramAuth?: (user: Record<string, unknown>) => void }).onTelegramAuth = (u) =>
+      void onTelegramAuth(u)
+
+    const container = tgMountRef.current
+    if (!container) return
+
+    const script = document.createElement('script')
+    script.src = 'https://telegram.org/js/telegram-widget.js?22'
+    script.async = true
+    script.setAttribute('data-telegram-login', bot)
+    script.setAttribute('data-size', 'large')
+    script.setAttribute('data-radius', '8')
+    script.setAttribute('data-onauth', 'onTelegramAuth(user)')
+    container.appendChild(script)
+
+    return () => {
+      container.innerHTML = ''
+      delete (window as Window & { onTelegramAuth?: unknown }).onTelegramAuth
+    }
+  }, [onTelegramAuth])
 
   const telegramBtnStyle: React.CSSProperties = {
     background: 'var(--bg-card)',
@@ -51,6 +130,8 @@ export default function LoginPage() {
     cursor: 'pointer',
     transition: 'border-color 0.15s',
   }
+
+  const telegramBotConfigured = Boolean(process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME)
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[var(--bg-primary)]">
@@ -85,15 +166,19 @@ export default function LoginPage() {
           </div>
 
           <div className="mb-6 space-y-3">
-            <button
-              type="button"
-              style={telegramBtnStyle}
-              className="hover:border-[var(--accent)]/50"
-              onClick={() => router.push('/dashboard')}
-            >
-              <TelegramIcon className="text-[var(--warning)]" />
-              <span className="text-sm font-semibold">Continue with Telegram</span>
-            </button>
+            {telegramBotConfigured ? (
+              <div ref={tgMountRef} className="flex min-h-[44px] w-full justify-center [&_iframe]:rounded-[10px]" />
+            ) : (
+              <button
+                type="button"
+                style={telegramBtnStyle}
+                className="hover:border-[var(--accent)]/50"
+                onClick={handleTelegramPlaceholder}
+              >
+                <TelegramIcon className="text-[var(--warning)]" />
+                <span className="text-sm font-semibold">Continue with Telegram</span>
+              </button>
+            )}
 
             <div className="flex items-center gap-3">
               <div className="h-px flex-1 bg-[var(--border)]" />
@@ -101,14 +186,25 @@ export default function LoginPage() {
               <div className="h-px flex-1 bg-[var(--border)]" />
             </div>
 
-            <button
-              type="button"
-              onClick={() => setVisible(true)}
-              className="flex w-full items-center justify-center gap-2 rounded-xl border border-[var(--border-bright)] bg-[var(--bg-secondary)] px-4 py-3 text-[var(--text-primary)] transition-all hover:border-[var(--accent)]/40"
-            >
-              <WalletIcon className="h-5 w-5" />
-              <span className="text-sm font-semibold">Connect Wallet</span>
-            </button>
+            {!connected ? (
+              <button
+                type="button"
+                onClick={() => setVisible(true)}
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-[var(--border-bright)] bg-[var(--bg-secondary)] px-4 py-3 text-[var(--text-primary)] transition-all hover:border-[var(--accent)]/40"
+              >
+                <WalletIcon className="h-5 w-5" />
+                <span className="text-sm font-semibold">Connect Wallet</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void handleWalletLogin()}
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-[var(--border-bright)] bg-[var(--bg-secondary)] px-4 py-3 text-[var(--text-primary)] transition-all hover:border-[var(--accent)]/40"
+              >
+                <WalletIcon className="h-5 w-5" />
+                <span className="text-sm font-semibold">Sign in with Wallet</span>
+              </button>
+            )}
           </div>
 
           <div className="mb-5 space-y-2">

@@ -10,6 +10,18 @@ const JUPITER_BASE =
   process.env.JUPITER_PREDICTION_BASE_URL || process.env.JUPITER_API_BASE || 'https://api.jup.ag/prediction/v1';
 const JUPITER_KEY = process.env.JUPITER_PREDICTION_API_KEY || process.env.JUPITER_API_KEY || '';
 
+function extractEvents(data) {
+  if (Array.isArray(data)) return data;
+  if (!data || typeof data !== 'object') return [];
+
+  if (Array.isArray(data.events)) return data.events;
+  if (Array.isArray(data.data)) return data.data;
+  if (Array.isArray(data.items)) return data.items;
+  if (data.events && typeof data.events === 'object') return Object.values(data.events);
+
+  return [];
+}
+
 router.get('/', requireDb, requireAuth, async (req, res) => {
   try {
     const { category, filter = 'live', limit = '20' } = req.query;
@@ -27,7 +39,11 @@ router.get('/', requireDb, requireAuth, async (req, res) => {
     if (!response.ok) return res.status(502).json({ error: 'Jupiter API error', status: response.status });
 
     const data = await response.json();
-    const events = data.events ?? data ?? [];
+    const events = extractEvents(data);
+    if (!Array.isArray(events)) {
+      console.warn('[markets] Unexpected Jupiter response shape');
+      return res.json({ markets: [], total: 0 });
+    }
 
     const markets = events.map(event => {
       const pricing = event.pricing ?? {};

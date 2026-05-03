@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono, JetBrains_Mono } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
+import { Toaster } from "react-hot-toast";
+import { QueryProvider } from "@/providers/QueryProvider";
+import { AuthProvider } from "@/providers/AuthProvider";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -40,7 +43,21 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable} ${jetbrainsMono.variable} h-full antialiased`}>
       <body className="min-h-full">
-        {children}
+        <QueryProvider>
+          <AuthProvider>
+            {children}
+            <Toaster
+              position="bottom-center"
+              toastOptions={{
+                style: {
+                  background: "var(--bg-card)",
+                  color: "var(--text-primary)",
+                  border: "1px solid var(--border-bright)",
+                },
+              }}
+            />
+          </AuthProvider>
+        </QueryProvider>
         <Analytics />
       </body>
     </html>

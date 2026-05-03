@@ -9,6 +9,7 @@ const { calculateEdge, calculateEV }     = require('../math/expectedValue');
 const { estimateProbability }            = require('../llm/probabilityEstimator');
 const { fetchMarket }                  = require('../scanner/marketScanner');
 const { evaluateOpportunity }          = require('../scanner/opportunityEvaluator');
+const { getPrisma }                    = require('../db/client');
 
 let scannerPaused = false;
 function isPaused() { return scannerPaused; }
@@ -523,7 +524,18 @@ function createBot() {
 
           estimate.side           = side;
           estimate.effectivePrice = evResult.effectivePrice;
-          await alerts.sendOpportunityAlert(match, estimate, kelly, betAmt, balance);
+          let notifyUser = null;
+          const prisma = getPrisma();
+          if (prisma && msg.from?.id != null && /^\d+$/.test(String(msg.from.id))) {
+            notifyUser = await prisma.user.findUnique({
+              where: { telegramId: BigInt(msg.from.id) },
+              select: { id: true, telegramId: true },
+            });
+          }
+          await alerts.sendOpportunityAlert(match, estimate, kelly, betAmt, balance, {
+            user: notifyUser,
+            deferWalletMark: false,
+          });
         } else {
           responseText +=
             `*No bet* — edge ${(edge * 100).toFixed(1)}% is below ${((parseFloat(process.env.MIN_EDGE) || 0.08) * 100).toFixed(0)}% minimum\\.`;
@@ -552,42 +564,55 @@ function createBot() {
 
   // ── Inline button callbacks ─────────────────────────────────────────────────
   bot.on('callback_query', async query => {
-    if (String(query.message?.chat?.id) !== chatId) {
-      bot.answerCallbackQuery(query.id, { text: 'Unauthorized.' });
-      return;
-    }
-    bot.answerCallbackQuery(query.id);
-
     const data = query.data;
+    const msgChat = String(query.message?.chat?.id ?? '');
 
-    // ── bet:{marketId}:{size} ────────────────────────────────────────────────
+    // ── bet:{token}:{size} — token maps pending opportunity (supports per-user chats) ─
     if (data.startsWith('bet:')) {
-      const [, marketId, size] = data.split(':');
+      const parts = data.split(':');
+      if (parts.length !== 3) {
+        await bot.answerCallbackQuery(query.id, { text: 'Bad request.' });
+        return;
+      }
+      const [, token, size] = parts;
+      const pending = alerts.getPendingOpportunity(token);
+      if (!pending) {
+        await bot.answerCallbackQuery(query.id, { text: 'Expired or not found.' });
+        return;
+      }
+
+      const allowedChat = pending.telegramChatId
+        ? msgChat === String(pending.telegramChatId)
+        : msgChat === String(chatId);
+      if (!allowedChat) {
+        await bot.answerCallbackQuery(query.id, { text: 'Unauthorized.' });
+        return;
+      }
+
+      await bot.answerCallbackQuery(query.id);
+
+      const marketId = pending.marketId ?? pending.market?.id;
+      const replyTarget = msgChat;
 
       if (size === 'skip') {
-        alerts.pendingOpportunities.delete(marketId);
-        wallet.markMarketAlerted(marketId);
-        bot.sendMessage(chatId, 'Skipped\\.', { parse_mode: 'MarkdownV2' });
+        alerts.pendingOpportunities.delete(token);
+        if (marketId) wallet.markMarketAlerted(marketId);
+        bot.sendMessage(replyTarget, 'Skipped\\.', { parse_mode: 'MarkdownV2' });
         return;
       }
 
-      const pending = alerts.getPendingOpportunity(marketId);
-      if (!pending) {
-        bot.sendMessage(chatId, 'Opportunity expired or not found\\.');
-        return;
-      }
       if (Date.now() > pending.expiresAt) {
-        bot.sendMessage(chatId, 'Opportunity expired \\(10 min\\)\\.', { parse_mode: 'MarkdownV2' });
+        bot.sendMessage(replyTarget, 'Opportunity expired \\(10 min\\)\\.', { parse_mode: 'MarkdownV2' });
         return;
       }
 
       const balance = wallet.getBalance();
       if (wallet.getOpenPositionCount() >= (parseInt(process.env.MAX_OPEN_POSITIONS) || 10)) {
-        bot.sendMessage(chatId, `Max open positions reached\\.`);
+        bot.sendMessage(replyTarget, `Max open positions reached\\.`);
         return;
       }
       if (balance < (parseFloat(process.env.MIN_BANKROLL) || 10)) {
-        bot.sendMessage(chatId, `Balance too low \\($${balance.toFixed(2)}\\)\\.`, { parse_mode: 'MarkdownV2' });
+        bot.sendMessage(replyTarget, `Balance too low \\($${balance.toFixed(2)}\\)\\.`, { parse_mode: 'MarkdownV2' });
         return;
       }
 
@@ -611,14 +636,20 @@ function createBot() {
           closeTime:      pending.market.closeTime ?? null,
           volumeUsd:      pending.market.volumeUsd ?? null,
         });
-        wallet.markMarketAlerted(marketId);
-        alerts.pendingOpportunities.delete(marketId);
-        reply(chatId, msgs.betConfirmedMessage(position));
+        if (marketId) wallet.markMarketAlerted(marketId);
+        alerts.pendingOpportunities.delete(token);
+        reply(replyTarget, msgs.betConfirmedMessage(position));
       } catch (err) {
-        bot.sendMessage(chatId, `Failed to place bet: ${err.message}`);
+        bot.sendMessage(replyTarget, `Failed to place bet: ${err.message}`);
       }
       return;
     }
+
+    if (msgChat !== String(chatId)) {
+      await bot.answerCallbackQuery(query.id, { text: 'Unauthorized.' });
+      return;
+    }
+    await bot.answerCallbackQuery(query.id);
 
     // ── manual_exit:{positionId}:{full|half} — partial PnL exit at live Jupiter price
     if (data.startsWith('manual_exit:')) {

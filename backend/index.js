@@ -27,6 +27,13 @@ const {
 }                  = require('./src/telegram/opportunityRateLimit');
 const { recordLastScanAt } = require('./src/db/lastScan');
 const { startApiServer } = require('./src/api/server');
+const { getPrisma } = require('./src/db/client');
+const {
+  hasActiveUsers,
+  getActiveUsers,
+  seedOwnerIfNeeded,
+  getUsersForOpportunityAlert,
+} = require('./src/bot/userManager');
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const SCAN_INTERVAL         = parseInt(process.env.SCAN_INTERVAL_MINUTES)         || 5;
@@ -61,6 +68,11 @@ async function pollPrices() {
 async function runOpportunityScan({ newOnly = false, moreMode = false } = {}) {
   if (isPaused()) { console.log('[scan] Paused — skipping.'); return; }
 
+  if (getPrisma() && !(await hasActiveUsers())) {
+    console.log('[scan] No active users — skipping scan cycle.');
+    return;
+  }
+
   const balance = wallet.getBalance();
   if (balance < MIN_BANKROLL) {
     console.log(`[scan] Balance $${balance.toFixed(2)} below minimum. Halted.`);
@@ -91,6 +103,8 @@ async function runOpportunityScan({ newOnly = false, moreMode = false } = {}) {
   }
 
   console.log(`[scan] ── Starting${newOnly ? ' new-market' : ' full'} scan${moreMode ? ' (MORE)' : ''} — up to ${maxSend} alert(s) ──`);
+
+  const MIN_BET_USD = parseFloat(process.env.MIN_BET_USD) || 5;
 
   let markets;
   try {
@@ -126,11 +140,42 @@ async function runOpportunityScan({ newOnly = false, moreMode = false } = {}) {
           break;
         }
 
-        console.log('[scan]   ✓ OPPORTUNITY — sending alert');
         r.estimate.side = r.evResult.side;
         r.estimate.effectivePrice = r.evResult.effectivePrice;
 
-        await alerts.sendOpportunityAlert(market, r.estimate, r.kellyFraction, r.betAmount, balance);
+        const prisma = getPrisma();
+        let dispatched = 0;
+
+        if (prisma) {
+          const recipients = await getUsersForOpportunityAlert(market);
+          if (recipients.length === 0) {
+            console.log('[scan]   ✓ OPPORTUNITY — no eligible Telegram users (paused / limits / categories / balance)');
+            continue;
+          }
+          console.log('[scan]   ✓ OPPORTUNITY — sending alert(s)');
+          for (const user of recipients) {
+            const uBal = Number(user.wallet?.balance ?? 0);
+            const betAmountForUser = Math.min(r.betAmount, uBal);
+            if (betAmountForUser < MIN_BET_USD) continue;
+            await alerts.sendOpportunityAlert(market, r.estimate, r.kellyFraction, betAmountForUser, balance, {
+              user,
+              deferWalletMark: true,
+            });
+            dispatched++;
+          }
+          if (dispatched === 0) {
+            console.log('[scan]   ✓ OPPORTUNITY — no user passed min bet after per-wallet cap');
+            continue;
+          }
+          wallet.markMarketAlerted(market.id);
+        } else {
+          console.log('[scan]   ✓ OPPORTUNITY — sending alert');
+          await alerts.sendOpportunityAlert(market, r.estimate, r.kellyFraction, r.betAmount, balance, {
+            deferWalletMark: false,
+          });
+          dispatched = 1;
+        }
+
         recordOpportunityAlert();
         sent++;
         await sleep(500);
@@ -173,6 +218,15 @@ async function main() {
 
   apiHttpServer = await startApiServer();
 
+  await seedOwnerIfNeeded();
+
+  if (getPrisma()) {
+    const n = (await getActiveUsers()).length;
+    console.log(
+      `[startup] Active DB users (not paused): ${n} — opportunity scans ${n ? 'on' : 'paused until at least one user'}`,
+    );
+  }
+
   // 2. Register scanner functions so /markets and /scan commands work
   registerScanners(scanMarkets, runScan, runMoreOpportunities);
 
@@ -186,7 +240,11 @@ async function main() {
   console.log(`[startup] New-market scan: ${buildCron(NEW_MARKET_SCAN_MINS)}`);
 
   // 5. Full scan with TA pre-filter
-  await runScan();
+  if (!getPrisma() || (await hasActiveUsers())) {
+    await runScan();
+  } else {
+    console.log('[startup] No active users — skipping initial full scan (cron will retry).');
+  }
   const scanCron = buildCron(SCAN_INTERVAL);
   cron.schedule(scanCron, () => runScan());
   console.log(`[startup] Full scan:       ${scanCron}`);
@@ -208,7 +266,10 @@ async function main() {
 
   // 7. Daily summary at 8am
   cron.schedule('0 8 * * *', async () => {
-    try { await alerts.sendDailySummary(wallet); }
+    try {
+      if (getPrisma() && !(await hasActiveUsers())) return;
+      await alerts.sendDailySummary(wallet);
+    }
     catch (err) { console.error(`[cron] Daily summary error: ${err.message}`); }
   });
   console.log('[startup] Daily summary:   08:00');

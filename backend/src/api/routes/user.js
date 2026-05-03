@@ -3,6 +3,7 @@
 const express = require('express');
 const { requireDb } = require('../middleware/prisma');
 const { requireAuth } = require('../middleware/auth');
+const { invalidateCache } = require('../../bot/userManager');
 
 const router = express.Router();
 
@@ -70,6 +71,7 @@ router.patch('/', requireDb, requireAuth, async (req, res) => {
         telegramAlerts: true,
       },
     });
+    invalidateCache();
     res.json(updated);
   } catch (err) {
     console.error('[user PATCH]', err);
@@ -88,6 +90,7 @@ router.post('/pause', requireDb, requireAuth, async (req, res) => {
       where: { id: req.user.userId },
       data: { isPaused: newPaused },
     });
+    invalidateCache();
     res.json({ isPaused: newPaused });
   } catch (err) {
     console.error('[user/pause]', err);

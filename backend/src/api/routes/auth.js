@@ -8,6 +8,7 @@ const { PublicKey } = require('@solana/web3.js');
 
 const { requireDb } = require('../middleware/prisma');
 const { requireAuth, getJwtSecret } = require('../middleware/auth');
+const { invalidateCache } = require('../../bot/userManager');
 
 const router = express.Router();
 
@@ -86,6 +87,8 @@ router.post('/telegram', requireDb, async (req, res) => {
     const secret = getJwtSecret();
     const token = await createToken(secret, { userId: user.id, telegramId: String(userData.id) });
 
+    invalidateCache();
+
     res.setHeader('Set-Cookie', `nightagent_token=${token}; ${cookieAttrs()}`);
     res.json({
       token,
@@ -139,6 +142,8 @@ router.post('/wallet', requireDb, async (req, res) => {
 
     const secret = getJwtSecret();
     const token = await createToken(secret, { userId: user.id, walletAddress: publicKey });
+
+    invalidateCache();
 
     res.setHeader('Set-Cookie', `nightagent_token=${token}; ${cookieAttrs()}`);
     res.json({

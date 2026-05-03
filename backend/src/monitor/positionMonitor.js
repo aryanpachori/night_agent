@@ -5,6 +5,8 @@ const { estimateProbability } = require('../llm/probabilityEstimator');
 const { recordOutcome } = require('../math/brierScore');
 const { sendExitAlert, sendStopLossAutoClosedNotification, sendPositionPriceTick } = require('../telegram/alerts');
 const wallet = require('../wallet/paperWallet');
+const { getPrisma } = require('../db/client');
+const { hasActiveUsers } = require('../bot/userManager');
 
 // ─── Thresholds ───────────────────────────────────────────────────────────────
 
@@ -82,6 +84,7 @@ function priceTickCooldownMs(secondsToResolve) {
  * Called by the standard cron (default every 5 min).
  */
 async function monitorPositions() {
+  if (getPrisma() && !(await hasActiveUsers())) return;
   const positions = wallet.getPositions();
   if (positions.length === 0) return;
   console.log(`[monitor] Checking ${positions.length} open position(s)...`);
@@ -207,6 +210,7 @@ async function checkPosition(position) {
  * without waiting for the full 5-min monitor cycle.
  */
 async function monitorFastPositions() {
+  if (getPrisma() && !(await hasActiveUsers())) return;
   const positions = wallet.getPositions();
   if (positions.length === 0) return;
   for (const position of positions) {

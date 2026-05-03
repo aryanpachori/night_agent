@@ -1,9 +1,10 @@
 'use client'
 
 import { Bell, RefreshCw } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
 import { NightAgentLogoMark } from '@/components/brand/night-agent-logo-mark'
-import { mockWallet } from '@/data/mock'
 import { formatUSD, formatPct } from '@/lib/utils'
+import { useSummaryStats } from '@/hooks/useStats'
 
 interface TopbarProps {
   title: string
@@ -11,7 +12,11 @@ interface TopbarProps {
 }
 
 export function Topbar({ title, subtitle }: TopbarProps) {
-  const pnlPositive = mockWallet.totalPnl >= 0
+  const qc = useQueryClient()
+  const { data: stats, isLoading } = useSummaryStats()
+  const pnlPositive = (stats?.totalPnl ?? 0) >= 0
+  const balance = stats?.balance
+  const roi = stats?.roi
 
   return (
     <header className="sticky top-0 z-40 flex min-h-14 flex-wrap items-center justify-between gap-x-2 gap-y-2 border-b border-[var(--border)] bg-[var(--bg-secondary)]/80 px-3 py-2 backdrop-blur-sm sm:flex-nowrap sm:gap-4 sm:px-6 sm:py-0">
@@ -31,12 +36,12 @@ export function Topbar({ title, subtitle }: TopbarProps) {
         {/* Compact balance — mobile */}
         <div className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-card)] px-2 py-1 sm:hidden">
           <span className="font-mono text-[11px] font-semibold leading-tight text-[var(--text-primary)]">
-            {formatUSD(mockWallet.balance)}
+            {isLoading || balance == null ? '—' : formatUSD(balance)}
           </span>
           <span
             className={`font-mono text-[11px] font-semibold leading-tight ${pnlPositive ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}
           >
-            {formatPct(mockWallet.roi)}
+            {isLoading || roi == null ? '—' : formatPct(roi)}
           </span>
         </div>
 
@@ -44,7 +49,9 @@ export function Topbar({ title, subtitle }: TopbarProps) {
         <div className="hidden items-center gap-3 rounded-lg border border-[var(--border)] bg-[var(--bg-card)] px-3 py-1.5 sm:flex">
           <div>
             <p className="text-[10px] uppercase tracking-wider text-[var(--text-muted)]">Balance</p>
-            <p className="font-mono text-sm font-semibold text-[var(--text-primary)]">{formatUSD(mockWallet.balance)}</p>
+            <p className="font-mono text-sm font-semibold text-[var(--text-primary)]">
+              {isLoading || balance == null ? '—' : formatUSD(balance)}
+            </p>
           </div>
           <div className="h-8 w-px bg-[var(--border)]" />
           <div>
@@ -52,7 +59,7 @@ export function Topbar({ title, subtitle }: TopbarProps) {
             <p
               className={`font-mono text-sm font-semibold ${pnlPositive ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}
             >
-              {formatPct(mockWallet.roi)}
+              {isLoading || roi == null ? '—' : formatPct(roi)}
             </p>
           </div>
         </div>
@@ -70,6 +77,7 @@ export function Topbar({ title, subtitle }: TopbarProps) {
           type="button"
           className="rounded-lg p-2 text-[var(--text-secondary)] transition-all hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
           aria-label="Refresh"
+          onClick={() => void qc.invalidateQueries()}
         >
           <RefreshCw className="h-4 w-4" />
         </button>

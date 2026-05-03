@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono, JetBrains_Mono } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
 import { Toaster } from "react-hot-toast";
+import { ApiBaseProvider, normalizeApiBaseUrl } from "@/providers/ApiBaseProvider";
 import { QueryProvider } from "@/providers/QueryProvider";
 import { AuthProvider } from "@/providers/AuthProvider";
 import "./globals.css";
@@ -36,28 +37,35 @@ export const metadata: Metadata = {
   },
 };
 
+/** So `NEXT_PUBLIC_API_URL` is read when the page is rendered, not only at client bundle build. */
+export const dynamic = "force-dynamic";
+
 export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const apiBase = normalizeApiBaseUrl(process.env.NEXT_PUBLIC_API_URL);
+
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable} ${jetbrainsMono.variable} h-full antialiased`}>
       <body className="min-h-full">
         <QueryProvider>
-          <AuthProvider>
-            {children}
-            <Toaster
-              position="bottom-center"
-              toastOptions={{
-                style: {
-                  background: "var(--bg-card)",
-                  color: "var(--text-primary)",
-                  border: "1px solid var(--border-bright)",
-                },
-              }}
-            />
-          </AuthProvider>
+          <ApiBaseProvider apiBase={apiBase}>
+            <AuthProvider>
+              {children}
+              <Toaster
+                position="bottom-center"
+                toastOptions={{
+                  style: {
+                    background: "var(--bg-card)",
+                    color: "var(--text-primary)",
+                    border: "1px solid var(--border-bright)",
+                  },
+                }}
+              />
+            </AuthProvider>
+          </ApiBaseProvider>
         </QueryProvider>
         <Analytics />
       </body>

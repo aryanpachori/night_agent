@@ -1,8 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'
+import { useApiBase } from '@/providers/ApiBaseProvider'
 
 export function useAlerts(type?: 'bet' | 'skipped' | 'all', limit = 20) {
   return useQuery({
@@ -20,6 +19,7 @@ export function useAlerts(type?: 'bet' | 'skipped' | 'all', limit = 20) {
  */
 export function useAlertStream(enabled = true) {
   const qc = useQueryClient()
+  const apiBase = useApiBase()
   const esRef = useRef<EventSource | null>(null)
 
   useEffect(() => {
@@ -28,7 +28,7 @@ export function useAlertStream(enabled = true) {
     const token = localStorage.getItem('nightagent_token')
     if (!token) return
 
-    const url = `${API_BASE}/api/alerts/stream?token=${encodeURIComponent(token)}`
+    const url = `${apiBase}/api/alerts/stream?token=${encodeURIComponent(token)}`
     const es = new EventSource(url)
     esRef.current = es
 
@@ -60,7 +60,7 @@ export function useAlertStream(enabled = true) {
       es.close()
       esRef.current = null
     }
-  }, [enabled, qc])
+  }, [enabled, qc, apiBase])
 }
 
 export function useRecordAlertAction() {

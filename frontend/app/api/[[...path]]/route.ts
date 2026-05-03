@@ -53,8 +53,17 @@ async function proxy(req: NextRequest, segments: string[]): Promise<NextResponse
   try {
     upstream = await fetch(target, init)
   } catch (err) {
+    const e = err as NodeJS.ErrnoException
     console.error("[api proxy] fetch failed", target.toString(), err)
-    return NextResponse.json({ error: "Upstream unavailable" }, { status: 502 })
+    return NextResponse.json(
+      {
+        error: "Upstream unavailable",
+        /** e.g. ECONNREFUSED = nothing listening or security group blocks Vercel → EC2 */
+        code: e?.code ?? "UNKNOWN",
+        path: `${target.pathname}${target.search}`,
+      },
+      { status: 502 },
+    )
   }
 
   const out = new Headers(upstream.headers)

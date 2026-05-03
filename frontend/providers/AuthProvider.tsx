@@ -25,6 +25,9 @@ export interface AuthUser {
   alertIntervalMin?: number
   telegramAlerts?: boolean
   isPaused: boolean
+  /** Auto-exit thresholds from PATCH /api/user (optional until first save) */
+  autoTakeProfitPct?: number | null
+  autoStopLossPct?: number | null
   wallet?: {
     balance: number
     totalPnl: number

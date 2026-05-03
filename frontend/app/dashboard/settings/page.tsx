@@ -64,8 +64,8 @@ export default function SettingsPage() {
     if (!user) return
     const cats = [...(user.categories ?? [])]
     const rm = user.riskMode ?? 'moderate'
-    const tp = (user as Record<string, unknown>).autoTakeProfitPct as number | null ?? null
-    const sl = (user as Record<string, unknown>).autoStopLossPct as number | null ?? null
+    const tp = user.autoTakeProfitPct ?? null
+    const sl = user.autoStopLossPct ?? null
     baseline.current = { categories: [...cats], riskMode: rm, autoTakeProfitPct: tp, autoStopLossPct: sl }
     setCategories(cats)
     setRiskMode(rm)

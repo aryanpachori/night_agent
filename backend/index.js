@@ -149,7 +149,7 @@ async function runOpportunityScan({ newOnly = false, moreMode = false } = {}) {
         if (prisma) {
           const recipients = await getUsersForOpportunityAlert(market);
           if (recipients.length === 0) {
-            console.log('[scan]   ✓ OPPORTUNITY — no eligible Telegram users (paused / limits / categories / balance)');
+            console.log('[scan]   ✓ OPPORTUNITY — no eligible users (paused / limits / categories / balance)');
             continue;
           }
           console.log('[scan]   ✓ OPPORTUNITY — sending alert(s)');

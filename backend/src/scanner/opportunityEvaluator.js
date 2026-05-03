@@ -21,43 +21,41 @@ function minResolveSecondsThreshold() {
 }
 
 /**
- * Stricter edge requirement for shorter markets.
- * Short windows are dominated by noise — need a much larger signal to justify a bet.
+ * Stricter edge requirement for shorter markets (relaxed for fast markets).
+ * Env DURATION_EDGE_SCALE=off disables scaling entirely (1× at all durations).
  *
  * Minutes left → multiplier on MIN_EDGE:
- *   < 5m  → 4.0×   < 15m → 3.0×   < 30m → 2.5×
- *   < 60m → 2.0×   < 2h  → 1.5×   < 4h  → 1.2×
- *   ≥ 4h  → 1.0×
+ *   < 2m  → 3.0×   < 5m  → 2.0×   < 15m → 1.5×
+ *   < 30m → 1.3×   < 60m → 1.2×   ≥ 60m → 1.0×
  */
 function durationScaledMinEdge(secondsToResolve, baseEdge) {
+  if (process.env.DURATION_EDGE_SCALE === 'off') return baseEdge;
   if (!Number.isFinite(secondsToResolve) || secondsToResolve <= 0) return baseEdge;
   const m = secondsToResolve / 60;
-  if (m < 5)   return baseEdge * 4.0;
-  if (m < 15)  return baseEdge * 3.0;
-  if (m < 30)  return baseEdge * 2.5;
-  if (m < 60)  return baseEdge * 2.0;
-  if (m < 120) return baseEdge * 1.5;
-  if (m < 240) return baseEdge * 1.2;
+  if (m < 2)   return baseEdge * 3.0;
+  if (m < 5)   return baseEdge * 2.0;
+  if (m < 15)  return baseEdge * 1.5;
+  if (m < 30)  return baseEdge * 1.3;
+  if (m < 60)  return baseEdge * 1.2;
   return baseEdge;
 }
 
 /**
- * Kelly fraction multiplier for market duration.
- * Shorter horizon = higher uncertainty = smaller bet even if edge passes.
+ * Kelly fraction multiplier for market duration (relaxed for fast markets).
+ * Env DURATION_KELLY_SCALE=off disables scaling entirely (1.0× at all durations).
  *
- *   < 5m  → 0.15×   < 15m → 0.25×   < 30m → 0.40×
- *   < 60m → 0.55×   < 2h  → 0.75×   < 4h  → 0.90×
- *   ≥ 4h  → 1.00×
+ *   < 2m  → 0.30×   < 5m  → 0.50×   < 15m → 0.65×
+ *   < 30m → 0.80×   < 60m → 0.90×   ≥ 60m → 1.00×
  */
 function durationKellyMultiplier(secondsToResolve) {
+  if (process.env.DURATION_KELLY_SCALE === 'off') return 1.0;
   if (!Number.isFinite(secondsToResolve) || secondsToResolve <= 0) return 1.0;
   const m = secondsToResolve / 60;
-  if (m < 5)   return 0.15;
-  if (m < 15)  return 0.25;
-  if (m < 30)  return 0.40;
-  if (m < 60)  return 0.55;
-  if (m < 120) return 0.75;
-  if (m < 240) return 0.90;
+  if (m < 2)   return 0.30;
+  if (m < 5)   return 0.50;
+  if (m < 15)  return 0.65;
+  if (m < 30)  return 0.80;
+  if (m < 60)  return 0.90;
   return 1.0;
 }
 

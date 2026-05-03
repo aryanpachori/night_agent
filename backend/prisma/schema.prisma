@@ -25,8 +25,8 @@ model User {
   // Bot settings
   categories     String[] @default(["crypto", "politics"])
   riskMode       String   @default("moderate")
-  maxAlertsPerDay Int     @default(3)
-  alertIntervalMin Int    @default(60)
+  maxAlertsPerDay Int     @default(10)
+  alertIntervalMin Int    @default(5)
   telegramAlerts Boolean  @default(true)
   isPaused       Boolean  @default(false)
 

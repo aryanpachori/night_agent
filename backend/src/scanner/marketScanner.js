@@ -62,11 +62,13 @@ function formatTimeToResolveShort(seconds) {
 /** Jupiter payloads vary; pull the widest event label we can. */
 function pickEventTitle(event) {
   const t =
+    event.metadata?.title ??          // Jupiter nested: { metadata: { title: "..." } }
     event.title ??
     event.name ??
     event.eventTitle ??
     event.question ??
     event.summary ??
+    event.metadata?.slug?.replace(/[-_]/g, ' ') ??
     event.slug?.replace(/[-_]/g, ' ') ??
     '';
   return String(t).trim();
@@ -123,6 +125,9 @@ function normaliseMarket(event, market, now) {
 
   const secondsToResolve = Math.max(0, (closeMs - now) / 1000);
 
+  // Event-level total volume: Jupiter stores it as micro units (e.g. "18360481000000")
+  const eventVolumeUsd = Number(event.volumeUsd ?? 0) / NATIVE_UNIT;
+
   return {
     id:          market.marketId ?? market.id,
     eventId:     event.eventId   ?? event.id,
@@ -138,6 +143,7 @@ function normaliseMarket(event, market, now) {
     sellYesPrice: toDecimal(pricing.sellYesPriceUsd  ?? 0),
     sellNoPrice:  toDecimal(pricing.sellNoPriceUsd   ?? 0),
     volumeUsd,
+    eventVolumeUsd,
     daysLeft:    Math.round((closeMs - now) / 86_400_000),
     /** Actual time to resolution in seconds (for 5m/15m/short-dated markets; daysLeft rounds to 0). */
     secondsToResolve,

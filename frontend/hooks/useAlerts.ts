@@ -5,6 +5,8 @@ export function useAlerts(type?: 'bet' | 'skipped' | 'all', limit = 20) {
   return useQuery({
     queryKey: ['alerts', type ?? 'all', limit],
     queryFn: () => api.get('/api/alerts', { params: { type, limit } }).then((r) => r.data),
+    refetchInterval: 30 * 1000,
+    staleTime: 20 * 1000,
   })
 }
 

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Topbar } from '@/components/layout/topbar'
 import { Card } from '@/components/ui/card'
@@ -35,20 +35,21 @@ function alertTypeLabel(alert: { actionTaken?: string | null; side?: string }) {
 export default function AlertsPage() {
   const { user, refetchUser } = useAuth()
   const updateSettings = useUpdateSettings()
-  const [maxAlerts, setMaxAlerts] = useState(3)
-  const [minTime, setMinTime] = useState('1hr')
+  const [maxAlerts, setMaxAlerts] = useState(10)
+  const [minTime, setMinTime] = useState('5min')
   const [telegramOn, setTelegramOn] = useState(true)
   const [webNotif, setWebNotif] = useState(false)
   const [filterTab, setFilterTab] = useState('all')
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default')
 
   const { data: alertsPayload } = useAlerts('all', 50)
+  const prevAlertCountRef = useRef<number | null>(null)
 
   useEffect(() => {
     if (!user) return
-    setMaxAlerts(user.maxAlertsPerDay ?? 3)
-    const aim = user.alertIntervalMin ?? 60
-    setMinTime(aim <= 30 ? '30min' : aim <= 60 ? '1hr' : '2hr')
+    setMaxAlerts(user.maxAlertsPerDay ?? 10)
+    const aim = user.alertIntervalMin ?? 5
+    setMinTime(aim <= 5 ? '5min' : aim <= 15 ? '15min' : aim <= 30 ? '30min' : '1hr')
     setTelegramOn(user.telegramAlerts ?? false)
   }, [user])
 
@@ -56,6 +57,29 @@ export default function AlertsPage() {
     if (typeof window === 'undefined' || typeof Notification === 'undefined') return
     setNotificationPermission(Notification.permission)
   }, [])
+
+  // Fire a browser push notification when the alert list grows
+  useEffect(() => {
+    const currentAlerts = alertsPayload?.alerts ?? []
+    const count = currentAlerts.length
+    if (prevAlertCountRef.current !== null && count > prevAlertCountRef.current) {
+      const newest = currentAlerts[0] as Record<string, unknown> | undefined
+      if (
+        typeof Notification !== 'undefined' &&
+        Notification.permission === 'granted' &&
+        newest
+      ) {
+        const action = String(newest.actionTaken ?? '')
+        const isBet = action.startsWith('bet')
+        const edge = Number(newest.edge ?? 0)
+        new Notification(isBet ? '📈 NightAgent Bet Alert' : '📋 NightAgent Alert', {
+          body: `${String(newest.marketQuestion ?? '').slice(0, 80)} — Edge ${(edge * 100).toFixed(0)}% (${String(newest.confidence ?? 'medium')})`,
+          icon: '/logo.png',
+        })
+      }
+    }
+    prevAlertCountRef.current = count
+  }, [alertsPayload])
 
   const handleWebNotif = async (next: boolean) => {
     if (typeof window === 'undefined') return
@@ -108,8 +132,8 @@ export default function AlertsPage() {
             <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
               <div>
                 <p className="mb-2 text-xs uppercase tracking-wider text-[var(--text-muted)]">Max Alerts / Day</p>
-                <div className="flex gap-1.5">
-                  {[1, 3, 5, '∞'].map((v) => (
+                <div className="flex flex-wrap gap-1.5">
+                  {[3, 5, 10, '∞'].map((v) => (
                     <button
                       key={String(v)}
                       type="button"
@@ -133,15 +157,15 @@ export default function AlertsPage() {
 
               <div>
                 <p className="mb-2 text-xs uppercase tracking-wider text-[var(--text-muted)]">Min Time Between Alerts</p>
-                <div className="flex gap-1.5">
-                  {['30min', '1hr', '2hr'].map((v) => (
+                <div className="flex flex-wrap gap-1.5">
+                  {['5min', '15min', '30min', '1hr'].map((v) => (
                     <button
                       key={v}
                       type="button"
                       disabled={updateSettings.isPending}
                       onClick={() => {
                         setMinTime(v)
-                        const mins = v === '30min' ? 30 : v === '1hr' ? 60 : 120
+                        const mins = v === '5min' ? 5 : v === '15min' ? 15 : v === '30min' ? 30 : 60
                         void persistPrefs({ alertIntervalMin: mins })
                       }}
                       className={`rounded-lg border px-3 py-1.5 font-mono text-xs transition-all ${

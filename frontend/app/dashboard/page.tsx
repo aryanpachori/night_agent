@@ -209,6 +209,8 @@ export default function DashboardPage() {
                 const isBet = action.startsWith('bet')
                 const createdAt = alert.createdAt ? new Date(String(alert.createdAt)) : new Date()
                 const edge = Number(alert.edge ?? 0)
+                const confidence = String(alert.confidence ?? 'medium')
+                const confVariant: Record<string, 'success' | 'warning' | 'muted'> = { high: 'success', medium: 'warning', low: 'muted' }
                 return (
                   <div key={String(alert.id)} className="flex items-start gap-3 rounded-lg bg-[var(--bg-secondary)] p-3">
                     <div
@@ -216,11 +218,14 @@ export default function DashboardPage() {
                     />
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-xs text-[var(--text-primary)]">{String(alert.marketQuestion ?? '')}</p>
-                      <div className="mt-0.5 flex items-center gap-1.5">
+                      <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
                         <Badge variant={isBet ? 'success' : 'muted'} size="sm">
                           {isBet ? `BET ${String(alert.side ?? '')}` : 'SKIPPED'}
                         </Badge>
-                        <span className="text-[10px] text-[var(--text-muted)]">Edge {formatPct(edge * 100, 0)}</span>
+                        <Badge variant={confVariant[confidence] ?? 'muted'} size="sm" className="capitalize">
+                          {confidence}
+                        </Badge>
+                        <span className="font-mono text-[10px] text-[var(--accent-bright)]">Edge {formatPct(edge * 100, 0)}</span>
                       </div>
                     </div>
                     <span className="flex-shrink-0 text-[10px] text-[var(--text-muted)]">
@@ -230,7 +235,7 @@ export default function DashboardPage() {
                 )
               })}
               {(alertsData?.alerts ?? []).length === 0 && (
-                <p className="text-xs text-[var(--text-muted)]">No alerts yet.</p>
+                <p className="text-xs text-[var(--text-muted)]">No alerts yet — bot scans every 2 min.</p>
               )}
             </div>
           </Card>

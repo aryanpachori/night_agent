@@ -77,7 +77,7 @@ function getPendingExit(positionId) {
   return pendingExits.get(positionId) ?? null;
 }
 
-async function recordAlertRow(user, market, analysis, kellyData) {
+async function recordAlertRow(user, market, analysis, kellyData, sentViaTelegram) {
   const prisma = getPrisma();
   if (!prisma || !user?.id) return;
   try {
@@ -98,7 +98,7 @@ async function recordAlertRow(user, market, analysis, kellyData) {
         suggestedAmount: kellyData.betAmount,
         suggestedContracts: kellyData.contracts,
         side: analysis.side,
-        sentViaTelegram: true,
+        sentViaTelegram: !!sentViaTelegram,
       },
     });
   } catch (err) {
@@ -136,32 +136,36 @@ async function sendOpportunityAlert(market, analysis, kellyFraction, betAmount, 
     ],
   };
 
-  const targetChat = user?.telegramId != null ? String(user.telegramId) : chatId();
-  const telegramChatId = String(targetChat);
-
-  setPendingOpportunity(token, {
-    market,
-    marketId: market.id,
-    analysis,
-    kellyFraction,
-    betAmount,
-    halfBetAmount,
-    contracts,
-    halfContracts,
-    entryPrice,
-    edge,
-    ev,
-    telegramChatId,
-    userId: user?.id ?? null,
-    expiresAt: Date.now() + 10 * 60 * 1000,
-  });
+  const targetChat =
+    user != null ? (user.telegramId != null ? String(user.telegramId) : null) : chatId();
 
   if (!deferWalletMark) {
     wallet.markMarketAlerted(market.id);
   }
 
-  await sendToChat(targetChat, text, { reply_markup });
-  await recordAlertRow(user, market, analysis, kellyData);
+  let sent = false;
+  if (targetChat) {
+    setPendingOpportunity(token, {
+      market,
+      marketId: market.id,
+      analysis,
+      kellyFraction,
+      betAmount,
+      halfBetAmount,
+      contracts,
+      halfContracts,
+      entryPrice,
+      edge,
+      ev,
+      telegramChatId: String(targetChat),
+      userId: user?.id ?? null,
+      expiresAt: Date.now() + 10 * 60 * 1000,
+    });
+    const msg = await sendToChat(targetChat, text, { reply_markup });
+    sent = !!msg;
+  }
+
+  await recordAlertRow(user, market, analysis, kellyData, sent);
 }
 
 // ─── sendExitAlert — take profit / negative edge: manual buttons only (no auto\\-close on profit) ─

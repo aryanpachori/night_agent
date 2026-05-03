@@ -54,18 +54,30 @@ async function hasActiveUsers() {
   return users.length > 0;
 }
 
-async function canSendTelegramAlertToUser(prisma, user) {
+async function canSendAlertToUser(prisma, user) {
   const start = new Date();
   start.setHours(0, 0, 0, 0);
-  const max = user.maxAlertsPerDay ?? 3;
-  const alertsToday = await prisma.alert.count({
-    where: {
-      userId: user.id,
-      createdAt: { gte: start },
-      sentViaTelegram: true,
-    },
-  });
-  return alertsToday < max;
+  const max = user.maxAlertsPerDay ?? 10;
+
+  const [alertsToday, lastAlert] = await Promise.all([
+    prisma.alert.count({ where: { userId: user.id, createdAt: { gte: start } } }),
+    prisma.alert.findFirst({
+      where: { userId: user.id },
+      orderBy: { createdAt: 'desc' },
+      select: { createdAt: true },
+    }),
+  ]);
+
+  if (alertsToday >= max) return false;
+
+  // Per-user minimum interval between alerts (default 5 min)
+  const intervalMin = user.alertIntervalMin ?? 5;
+  if (lastAlert) {
+    const minsSinceLast = (Date.now() - new Date(lastAlert.createdAt).getTime()) / 60000;
+    if (minsSinceLast < intervalMin) return false;
+  }
+
+  return true;
 }
 
 function categoryMatches(user, market) {
@@ -75,7 +87,7 @@ function categoryMatches(user, market) {
   return cats.includes(cat);
 }
 
-/** Users who should receive an opportunity Telegram for this market (DB mode). */
+/** Users eligible for opportunity alerts in DB (Telegram optional). */
 async function getUsersForOpportunityAlert(market) {
   const prisma = getPrisma();
   if (!prisma) return [];
@@ -86,12 +98,10 @@ async function getUsersForOpportunityAlert(market) {
 
   for (const u of users) {
     if (u.isPaused) continue;
-    if (!u.telegramAlerts) continue;
-    if (u.telegramId == null) continue;
     if (!categoryMatches(u, market)) continue;
     const bal = Number(u.wallet?.balance ?? 0);
     if (bal < minBank) continue;
-    if (!(await canSendTelegramAlertToUser(prisma, u))) continue;
+    if (!(await canSendAlertToUser(prisma, u))) continue;
     out.push(u);
   }
   return out;
@@ -149,6 +159,6 @@ module.exports = {
   hasActiveUsers,
   invalidateCache,
   getUsersForOpportunityAlert,
-  canSendTelegramAlertToUser,
+  canSendAlertToUser,
   seedOwnerIfNeeded,
 };

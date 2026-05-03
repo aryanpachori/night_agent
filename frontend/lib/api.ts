@@ -1,7 +1,15 @@
 import axios from 'axios'
 
-/** Inlined at build time (Next.js). Set `NEXT_PUBLIC_API_URL` on Vercel for Production + Preview, then redeploy. */
-export const PUBLIC_API_BASE_URL = process.env.NEXT_PUBLIC_API_URL?.trim() || 'http://localhost:4000'
+const explicit = process.env.NEXT_PUBLIC_API_URL?.trim()
+
+/**
+ * API origin for the browser.
+ * - If `NEXT_PUBLIC_API_URL` is set, axios uses it (must be HTTPS when the site is HTTPS, or browsers block mixed content).
+ * - On Vercel, if it is unset, use same-origin `''` so requests go to `/api/*` and `next.config` rewrites proxy to `BACKEND_URL`.
+ * - Locally, default to the Express dev server.
+ */
+export const PUBLIC_API_BASE_URL =
+  explicit || (process.env.VERCEL ? '' : 'http://127.0.0.1:4000')
 
 export const api = axios.create({
   baseURL: PUBLIC_API_BASE_URL,

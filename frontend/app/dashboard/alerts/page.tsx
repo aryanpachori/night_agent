@@ -132,7 +132,7 @@ export default function AlertsPage() {
   const handleBet = async (alert: Record<string, unknown>) => {
     const alertId = String(alert.id ?? '')
     const marketId = String(alert.marketId ?? '')
-    const side = String(alert.side ?? 'YES')
+    const side: 'YES' | 'NO' = alert.side === 'NO' ? 'NO' : 'YES'
     const stake = Number(alert.suggestedAmount ?? 50)
     const marketQuestion = String(alert.marketQuestion ?? '')
     const category = String(alert.category ?? '')

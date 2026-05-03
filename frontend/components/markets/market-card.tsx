@@ -35,7 +35,7 @@ const categoryColors: Record<string, string> = {
 
 function getEdgeColor(edge: number): string {
   if (edge >= 0.15) return 'var(--success)'
-  if (edge >= 0.08) return 'var(--accent-cyan)'
+  if (edge >= 0.08) return 'var(--warning)'
   return 'var(--text-muted)'
 }
 

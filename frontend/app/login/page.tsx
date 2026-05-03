@@ -2,7 +2,8 @@
 
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { Zap, Shield, TestTube2, Clock } from 'lucide-react'
+import { Shield, TestTube2, Clock } from 'lucide-react'
+import { NightAgentLogoMark } from '@/components/brand/night-agent-logo-mark'
 
 function TelegramIcon({ className }: { className?: string }) {
   return (
@@ -63,8 +64,8 @@ export default function LoginPage() {
       >
         <div className="rounded-2xl border border-[var(--border-bright)] bg-[var(--bg-card)] p-8 shadow-2xl">
           <div className="mb-8 flex flex-col items-center">
-            <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--accent)] shadow-[0_0_30px_var(--accent-glow)]">
-              <Zap className="h-6 w-6 text-[var(--bg-primary)]" />
+            <div className="mb-4 h-14 w-14 shrink-0 overflow-hidden rounded-2xl bg-[var(--bg-secondary)] shadow-[0_0_30px_var(--accent-glow)] ring-1 ring-[var(--border-bright)]">
+              <NightAgentLogoMark />
             </div>
             <h1 className="mb-1 text-xl font-bold text-[var(--text-primary)]">NightAgent</h1>
             <p className="max-w-[220px] text-center text-xs text-[var(--text-muted)]">
@@ -79,7 +80,7 @@ export default function LoginPage() {
               className="hover:border-[var(--accent)]/50"
               onClick={() => router.push('/dashboard')}
             >
-              <TelegramIcon className="text-[var(--accent-cyan)]" />
+              <TelegramIcon className="text-[var(--warning)]" />
               <span className="text-sm font-semibold">Continue with Telegram</span>
             </button>
 

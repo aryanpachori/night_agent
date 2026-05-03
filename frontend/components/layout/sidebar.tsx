@@ -3,7 +3,8 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { motion } from 'framer-motion'
 import type { LucideIcon } from 'lucide-react'
-import { LayoutDashboard, TrendingUp, Bell, Globe, Settings, Zap, LogOut } from 'lucide-react'
+import { LayoutDashboard, TrendingUp, Bell, Globe, Settings, LogOut } from 'lucide-react'
+import { NightAgentLogoMark } from '@/components/brand/night-agent-logo-mark'
 import { cn } from '@/lib/utils'
 import { mockUser, mockWallet } from '@/data/mock'
 
@@ -31,8 +32,8 @@ export function Sidebar() {
       {/* Logo */}
       <div className="p-5 border-b border-[var(--border)]">
         <div className="flex items-center gap-2.5">
-          <div className="w-7 h-7 rounded-lg bg-[var(--accent)] flex items-center justify-center">
-            <Zap className="w-4 h-4 text-[var(--bg-primary)]" />
+          <div className="flex h-8 w-8 shrink-0 overflow-hidden rounded-lg bg-[var(--bg-card)] ring-1 ring-[var(--border-bright)]">
+            <NightAgentLogoMark />
           </div>
           <span className="font-bold text-base text-[var(--text-primary)]">NightAgent</span>
         </div>

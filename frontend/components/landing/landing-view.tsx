@@ -4,7 +4,8 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { useInView } from 'react-intersection-observer'
-import { Zap, Scan, Brain, Bell } from 'lucide-react'
+import { Scan, Brain, Bell } from 'lucide-react'
+import { NightAgentLogoMark } from '@/components/brand/night-agent-logo-mark'
 import { StatCounter } from '@/components/landing/stat-counter'
 import { Button } from '@/components/ui/button'
 
@@ -104,7 +105,7 @@ function BrowserFrameMock({ preferredSrc = '/dashboard.png' }: { preferredSrc?: 
                   {[40, 55, 48, 62, 58, 70, 68, 75, 72, 80].map((h, j) => (
                     <div
                       key={j}
-                      className="flex-1 rounded-sm bg-[var(--accent-cyan)]/35"
+                      className="flex-1 rounded-sm bg-[var(--accent)]/35"
                       style={{ height: `${h}%` }}
                     />
                   ))}
@@ -145,7 +146,7 @@ function PhoneFrame({ preferredSrc = '/image.png' }: { preferredSrc?: string }) 
           />
         ) : (
           <div className="flex h-full flex-col items-center justify-center px-6 text-center">
-            <span className="text-xs font-semibold uppercase tracking-wider text-[var(--accent-cyan)]">
+            <span className="text-xs font-semibold uppercase tracking-wider text-[var(--warning)]">
               Telegram Bot Preview
             </span>
             <p className="mt-2 text-[11px] leading-relaxed text-[var(--text-muted)]">
@@ -188,8 +189,8 @@ export function LandingView() {
           transition={{ duration: 0.4 }}
           className="relative z-10 mb-8 flex items-center gap-2 rounded-full border border-[var(--border-bright)] bg-[var(--bg-card)] px-3 py-1.5"
         >
-          <div className="flex h-5 w-5 items-center justify-center rounded bg-[var(--accent)]">
-            <Zap className="h-3 w-3 text-[var(--bg-primary)]" />
+          <div className="h-6 w-6 shrink-0 overflow-hidden rounded-full ring-1 ring-[var(--border-bright)]">
+            <NightAgentLogoMark />
           </div>
           <span className="text-xs font-medium text-[var(--text-secondary)]">NightAgent — Early Access</span>
         </motion.div>
@@ -221,7 +222,7 @@ export function LandingView() {
                   ease: [0.0, 0.0, 0.2, 1],
                 }}
               >
-                <span className={word === 'Jupiter' ? 'text-[var(--accent-cyan)]' : undefined}>{word}</span>
+                <span className={word === 'Jupiter' ? 'text-[var(--accent)]' : undefined}>{word}</span>
               </motion.span>
             ))}
           </span>
@@ -362,7 +363,9 @@ export function LandingView() {
           >
             <div className="border-b border-[var(--accent)]/20 bg-[var(--accent-glow)] px-5 py-4">
               <div className="flex items-center gap-2">
-                <Zap className="h-4 w-4 text-[var(--accent)]" />
+                <div className="h-7 w-7 shrink-0 overflow-hidden rounded-lg ring-1 ring-[var(--accent)]/35">
+                  <NightAgentLogoMark />
+                </div>
                 <h3 className="text-sm font-semibold text-[var(--accent-bright)]">NightAgent</h3>
               </div>
             </div>
@@ -418,8 +421,8 @@ export function LandingView() {
       <footer className="border-t border-[var(--border)] px-4 py-8 sm:px-6">
         <div className="mx-auto flex max-w-5xl flex-col items-center justify-between gap-4 sm:flex-row">
           <div className="flex items-center gap-2">
-            <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-[var(--accent)]">
-              <Zap className="h-3.5 w-3.5 text-[var(--bg-primary)]" />
+            <div className="h-7 w-7 shrink-0 overflow-hidden rounded-lg ring-1 ring-[var(--border-bright)]">
+              <NightAgentLogoMark />
             </div>
             <span className="text-sm font-bold text-[var(--text-primary)]">NightAgent</span>
           </div>

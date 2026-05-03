@@ -1,6 +1,7 @@
 'use client'
 
 import { Bell, RefreshCw } from 'lucide-react'
+import { NightAgentLogoMark } from '@/components/brand/night-agent-logo-mark'
 import { mockWallet } from '@/data/mock'
 import { formatUSD, formatPct } from '@/lib/utils'
 
@@ -14,11 +15,16 @@ export function Topbar({ title, subtitle }: TopbarProps) {
 
   return (
     <header className="sticky top-0 z-40 flex min-h-14 flex-wrap items-center justify-between gap-x-2 gap-y-2 border-b border-[var(--border)] bg-[var(--bg-secondary)]/80 px-3 py-2 backdrop-blur-sm sm:flex-nowrap sm:gap-4 sm:px-6 sm:py-0">
-      <div className="min-w-0 flex-1 basis-[min(100%,12rem)] sm:basis-auto">
-        <h1 className="truncate text-sm font-semibold text-[var(--text-primary)]">{title}</h1>
-        {subtitle && (
-          <p className="hidden text-xs text-[var(--text-muted)] sm:block sm:truncate">{subtitle}</p>
-        )}
+      <div className="flex min-w-0 flex-1 basis-[min(100%,12rem)] items-center gap-2 sm:basis-auto">
+        <div className="flex h-7 w-7 shrink-0 overflow-hidden rounded-lg ring-1 ring-[var(--border-bright)] md:hidden">
+          <NightAgentLogoMark />
+        </div>
+        <div className="min-w-0 flex-1">
+          <h1 className="truncate text-sm font-semibold text-[var(--text-primary)]">{title}</h1>
+          {subtitle && (
+            <p className="hidden text-xs text-[var(--text-muted)] sm:block sm:truncate">{subtitle}</p>
+          )}
+        </div>
       </div>
 
       <div className="flex flex-shrink-0 items-center gap-1.5 sm:gap-4">

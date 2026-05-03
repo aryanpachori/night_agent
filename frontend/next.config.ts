@@ -12,11 +12,11 @@ if (process.env.VERCEL) {
     `[vercel build] client API base: ${u ? `NEXT_PUBLIC_API_URL → ${u}` : "unset → same-origin /api/* (use BACKEND_URL for rewrites)"}`,
   )
   console.log(
-    `[vercel build] rewrite /api/* → ${backend.replace(/\/$/, "")}/api/*`,
+    `[vercel build] API proxy target (BACKEND_URL / NEXT_PUBLIC_API_URL) → ${backend.replace(/\/$/, "")}/api/*`,
   )
   if (!u && !b) {
     console.warn(
-      "[vercel build] Set BACKEND_URL (recommended) or NEXT_PUBLIC_API_URL so /api rewrites can reach your Express server.",
+      "[vercel build] Set BACKEND_URL (recommended) or NEXT_PUBLIC_API_URL so app/api/[[...path]] can reach Express.",
     )
   }
 }
@@ -26,10 +26,6 @@ const nextConfig: NextConfig = {
   // same-origin `/api/*` on Vercel while rewrites proxy to BACKEND_URL.
   env: {
     NEXT_PUBLIC_VERCEL_DEPLOY: process.env.VERCEL ? "1" : "",
-  },
-  async rewrites() {
-    const base = backend.replace(/\/$/, "")
-    return [{ source: "/api/:path*", destination: `${base}/api/:path*` }]
   },
 }
 

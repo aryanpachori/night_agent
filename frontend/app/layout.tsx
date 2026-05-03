@@ -30,7 +30,8 @@ export const metadata: Metadata = {
   description:
     "Scan 3,400+ markets, find mispriced bets with Black-Scholes AI, and get Telegram alerts the moment there's real edge.",
   icons: {
-    icon: "/logo.png",
+    icon: [{ url: "/favicon.ico", type: "image/x-icon" }],
+    shortcut: "/favicon.ico",
     apple: "/logo.png",
   },
 };

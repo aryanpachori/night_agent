@@ -19,23 +19,23 @@ const riskModes = [
   {
     id: 'conservative',
     label: 'Conservative',
-    kelly: '0.25×',
-    maxBet: '2%',
-    consequence: 'Smallest bets, slowest growth, lowest drawdown risk',
+    emoji: '🛡️',
+    tagline: 'Small bets, play it safe',
+    description: 'The bot will suggest small bet sizes. Lower risk, lower reward.',
   },
   {
     id: 'moderate',
     label: 'Moderate',
-    kelly: '0.5×',
-    maxBet: '5%',
-    consequence: 'Balanced approach — recommended for new users',
+    emoji: '⚖️',
+    tagline: 'Balanced — our recommendation',
+    description: 'A good balance of risk and reward for most people.',
   },
   {
     id: 'aggressive',
     label: 'Aggressive',
-    kelly: '1.0×',
-    maxBet: '10%',
-    consequence: 'Larger bets, faster gains, higher variance',
+    emoji: '🚀',
+    tagline: 'Bigger bets, higher reward',
+    description: 'Larger bet sizes. Higher potential gains, but also higher losses.',
   },
 ] as const
 
@@ -47,9 +47,16 @@ export default function SettingsPage() {
   const resetWallet = useResetWallet()
   const { data: walletApi } = usePaperWallet()
 
-  const baseline = useRef({ categories: [] as string[], riskMode: 'moderate' as string })
+  const baseline = useRef({
+    categories: [] as string[],
+    riskMode: 'moderate' as string,
+    autoTakeProfitPct: null as number | null,
+    autoStopLossPct: null as number | null,
+  })
   const [categories, setCategories] = useState<string[]>([])
   const [riskMode, setRiskMode] = useState<string>('moderate')
+  const [autoTpPct, setAutoTpPct] = useState<number | null>(null)
+  const [autoSlPct, setAutoSlPct] = useState<number | null>(null)
   const [changed, setChanged] = useState(false)
   const [showResetConfirm, setShowResetConfirm] = useState(false)
 
@@ -57,9 +64,13 @@ export default function SettingsPage() {
     if (!user) return
     const cats = [...(user.categories ?? [])]
     const rm = user.riskMode ?? 'moderate'
-    baseline.current = { categories: [...cats], riskMode: rm }
+    const tp = (user as Record<string, unknown>).autoTakeProfitPct as number | null ?? null
+    const sl = (user as Record<string, unknown>).autoStopLossPct as number | null ?? null
+    baseline.current = { categories: [...cats], riskMode: rm, autoTakeProfitPct: tp, autoStopLossPct: sl }
     setCategories(cats)
     setRiskMode(rm)
+    setAutoTpPct(tp)
+    setAutoSlPct(sl)
     setChanged(false)
   }, [user])
 
@@ -67,6 +78,8 @@ export default function SettingsPage() {
     const b = baseline.current
     setCategories([...b.categories])
     setRiskMode(b.riskMode)
+    setAutoTpPct(b.autoTakeProfitPct)
+    setAutoSlPct(b.autoStopLossPct)
     setChanged(false)
   }
 
@@ -75,8 +88,10 @@ export default function SettingsPage() {
       await updateSettings.mutateAsync({
         categories,
         riskMode,
+        autoTakeProfitPct: autoTpPct,
+        autoStopLossPct: autoSlPct,
       })
-      baseline.current = { categories: [...categories], riskMode }
+      baseline.current = { categories: [...categories], riskMode, autoTakeProfitPct: autoTpPct, autoStopLossPct: autoSlPct }
       setChanged(false)
       toast.success('Settings saved')
     } catch {
@@ -98,7 +113,6 @@ export default function SettingsPage() {
   const walletBalance = walletApi?.balance ?? user?.wallet?.balance ?? 1000
   const walletRoi = walletApi?.roi ?? 0
   const walletWinRate = walletApi?.winRate ?? 0
-  const walletBrier = walletApi?.avgBrierScore ?? null
   const walletTotalPnl = walletApi?.totalPnl ?? 0
 
   const displayName = user?.firstName || user?.username || user?.walletAddress?.slice(0, 8) || 'Account'
@@ -107,7 +121,7 @@ export default function SettingsPage() {
 
   return (
     <div className="flex flex-1 flex-col">
-      <Topbar title="Settings" subtitle="Configure your NightAgent preferences" />
+      <Topbar title="Settings" subtitle="Customize how the bot works for you" />
 
       <div className="p-4 pb-32 sm:p-6 md:pb-6">
         <motion.div
@@ -119,27 +133,27 @@ export default function SettingsPage() {
           <motion.div variants={staggerItem}>
             <Card className="p-5">
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                <h3 className="text-sm font-semibold text-[var(--text-primary)]">Scanner</h3>
+                <h3 className="text-sm font-semibold text-[var(--text-primary)]">Bot</h3>
                 <Button
                   variant="secondary"
                   size="sm"
                   disabled={pauseBot.isPending}
                   onClick={() => pauseBot.mutate(undefined)}
                 >
-                  {user?.isPaused ? 'Resume scanner' : 'Pause scanner'}
+                  {user?.isPaused ? '▶ Resume bot' : '⏸ Pause bot'}
                 </Button>
               </div>
               <p className="text-xs text-[var(--text-muted)]">
-                Pause stops new alerts until you resume (toggle also affects dashboard bot status).
+                Pausing the bot stops new bet signals until you resume.
               </p>
             </Card>
           </motion.div>
 
           <motion.div variants={staggerItem}>
             <Card className="p-5">
-              <h3 className="mb-4 text-sm font-semibold text-[var(--text-primary)]">Market Categories</h3>
+              <h3 className="mb-4 text-sm font-semibold text-[var(--text-primary)]">Topics I care about</h3>
               <p className="mb-3 text-[10px] text-[var(--text-muted)]">
-                Supported API categories: crypto, politics, economics, sports, tech, culture, us elections.
+                The bot will focus signals on these topics.
               </p>
               <div className="flex flex-wrap gap-2">
                 {allCategories.map((cat) => {
@@ -171,7 +185,8 @@ export default function SettingsPage() {
 
           <motion.div variants={staggerItem}>
             <Card className="p-5">
-              <h3 className="mb-4 text-sm font-semibold text-[var(--text-primary)]">Risk Mode</h3>
+              <h3 className="mb-1 text-sm font-semibold text-[var(--text-primary)]">Risk Appetite</h3>
+              <p className="mb-4 text-xs text-[var(--text-muted)]">How much should the bot suggest you bet?</p>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 {riskModes.map((mode) => {
                   const active = riskMode === mode.id
@@ -189,26 +204,16 @@ export default function SettingsPage() {
                           : 'border-[var(--border)] bg-[var(--bg-secondary)] hover:border-[var(--border-bright)]'
                       }`}
                     >
+                      <p className="mb-1 text-lg">{mode.emoji}</p>
                       <p
-                        className={`mb-2 text-sm font-semibold ${active ? 'text-[var(--accent-bright)]' : 'text-[var(--text-primary)]'}`}
+                        className={`mb-1 text-sm font-semibold ${active ? 'text-[var(--accent-bright)]' : 'text-[var(--text-primary)]'}`}
                       >
                         {mode.label}
                       </p>
-                      <div className="space-y-1 font-mono text-[10px]">
-                        <div className="flex justify-between">
-                          <span className="text-[var(--text-muted)]">Kelly</span>
-                          <span className={active ? 'text-[var(--accent-bright)]' : 'text-[var(--text-secondary)]'}>
-                            {mode.kelly}
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-[var(--text-muted)]">Max bet</span>
-                          <span className={active ? 'text-[var(--accent-bright)]' : 'text-[var(--text-secondary)]'}>
-                            {mode.maxBet}
-                          </span>
-                        </div>
-                      </div>
-                      <p className="mt-1 text-xs text-[var(--text-muted)]">{mode.consequence}</p>
+                      <p className={`mb-2 text-xs font-medium ${active ? 'text-[var(--accent-bright)]' : 'text-[var(--text-secondary)]'}`}>
+                        {mode.tagline}
+                      </p>
+                      <p className="text-[10px] text-[var(--text-muted)]">{mode.description}</p>
                     </button>
                   )
                 })}
@@ -218,16 +223,100 @@ export default function SettingsPage() {
 
           <motion.div variants={staggerItem}>
             <Card className="p-5">
+              <h3 className="mb-1 text-sm font-semibold text-[var(--text-primary)]">Auto-exit Rules</h3>
+              <p className="mb-4 text-xs text-[var(--text-muted)]">
+                The bot will automatically close your bet when it hits these thresholds. Leave blank to manage exits yourself.
+              </p>
+
+              {/* Auto take-profit */}
+              <div className="mb-4">
+                <div className="mb-1 flex items-center justify-between">
+                  <label className="text-xs font-medium text-[var(--text-secondary)]">
+                    💰 Auto take-profit at
+                  </label>
+                  <span className="font-mono text-xs text-[var(--accent-bright)]">
+                    {autoTpPct != null ? `${autoTpPct}% gain` : 'Off'}
+                  </span>
+                </div>
+                <p className="mb-2 text-[10px] text-[var(--text-muted)]">
+                  e.g. 100% = exit when your $50 bet is worth $100 (2×). Recommended: 80–200%.
+                </p>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="range"
+                    min={10}
+                    max={400}
+                    step={10}
+                    value={autoTpPct ?? 100}
+                    disabled={autoTpPct == null}
+                    onChange={(e) => { setAutoTpPct(Number(e.target.value)); setChanged(true) }}
+                    className="h-1.5 flex-1 cursor-pointer accent-[var(--accent)]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => { setAutoTpPct(autoTpPct == null ? 100 : null); setChanged(true) }}
+                    className={`shrink-0 rounded-md border px-3 py-1 text-xs font-medium transition-colors ${
+                      autoTpPct != null
+                        ? 'border-[var(--accent)]/50 bg-[var(--accent-glow)] text-[var(--accent-bright)]'
+                        : 'border-[var(--border)] bg-[var(--bg-secondary)] text-[var(--text-muted)]'
+                    }`}
+                  >
+                    {autoTpPct != null ? 'On' : 'Off'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Auto stop-loss */}
+              <div>
+                <div className="mb-1 flex items-center justify-between">
+                  <label className="text-xs font-medium text-[var(--text-secondary)]">
+                    🛑 Auto stop-loss at
+                  </label>
+                  <span className="font-mono text-xs text-[var(--danger)]">
+                    {autoSlPct != null ? `${autoSlPct}% loss` : 'Off'}
+                  </span>
+                </div>
+                <p className="mb-2 text-[10px] text-[var(--text-muted)]">
+                  e.g. 50% = exit when your $50 bet drops to $25. Recommended: 40–60%.
+                </p>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="range"
+                    min={5}
+                    max={95}
+                    step={5}
+                    value={autoSlPct ?? 50}
+                    disabled={autoSlPct == null}
+                    onChange={(e) => { setAutoSlPct(Number(e.target.value)); setChanged(true) }}
+                    className="h-1.5 flex-1 cursor-pointer accent-[var(--danger)]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => { setAutoSlPct(autoSlPct == null ? 50 : null); setChanged(true) }}
+                    className={`shrink-0 rounded-md border px-3 py-1 text-xs font-medium transition-colors ${
+                      autoSlPct != null
+                        ? 'border-[var(--danger)]/50 bg-[var(--danger-dim)] text-[var(--danger)]'
+                        : 'border-[var(--border)] bg-[var(--bg-secondary)] text-[var(--text-muted)]'
+                    }`}
+                  >
+                    {autoSlPct != null ? 'On' : 'Off'}
+                  </button>
+                </div>
+              </div>
+            </Card>
+          </motion.div>
+
+          <motion.div variants={staggerItem}>
+            <Card className="p-5">
               <div className="mb-4 flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-[var(--text-primary)]">Paper Wallet</h3>
-                <Badge variant={walletTotalPnl >= 0 ? 'success' : 'danger'}>{formatPct(walletRoi)}</Badge>
+                <h3 className="text-sm font-semibold text-[var(--text-primary)]">Your Paper Wallet</h3>
+                <Badge variant={walletTotalPnl >= 0 ? 'success' : 'danger'}>{formatPct(walletRoi)} ROI</Badge>
               </div>
               <div className="mb-4 grid grid-cols-2 gap-3">
                 {[
                   ['Balance', formatUSD(walletBalance)],
-                  ['Total P&L', `${walletTotalPnl >= 0 ? '+' : ''}${formatUSD(walletTotalPnl)}`],
+                  ['Total Profit / Loss', `${walletTotalPnl >= 0 ? '+' : ''}${formatUSD(walletTotalPnl)}`],
                   ['Win Rate', `${walletWinRate}%`],
-                  ['Brier Score', walletBrier != null ? walletBrier.toFixed(2) : '—'],
                 ].map(([label, value]) => (
                   <div key={label} className="rounded-lg bg-[var(--bg-secondary)] p-3">
                     <p className="text-[10px] uppercase tracking-wider text-[var(--text-muted)]">{label}</p>

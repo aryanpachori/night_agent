@@ -25,6 +25,8 @@ router.get('/', requireDb, requireAuth, async (req, res) => {
         alertIntervalMin: true,
         telegramAlerts: true,
         isPaused: true,
+        autoTakeProfitPct: true,
+        autoStopLossPct: true,
         createdAt: true,
       },
     });
@@ -41,7 +43,7 @@ router.get('/', requireDb, requireAuth, async (req, res) => {
 
 router.patch('/', requireDb, requireAuth, async (req, res) => {
   try {
-    const ALLOWED = ['categories', 'riskMode', 'maxAlertsPerDay', 'alertIntervalMin', 'telegramAlerts'];
+    const ALLOWED = ['categories', 'riskMode', 'maxAlertsPerDay', 'alertIntervalMin', 'telegramAlerts', 'autoTakeProfitPct', 'autoStopLossPct'];
     const update = {};
     for (const key of ALLOWED) {
       if (key in req.body) update[key] = req.body[key];
@@ -56,6 +58,20 @@ router.patch('/', requireDb, requireAuth, async (req, res) => {
         return res.status(400).json({ error: 'Invalid categories' });
       }
     }
+    if ('autoTakeProfitPct' in update) {
+      const v = update.autoTakeProfitPct;
+      if (v !== null && (!Number.isFinite(Number(v)) || Number(v) < 10 || Number(v) > 1000)) {
+        return res.status(400).json({ error: 'autoTakeProfitPct must be 10-1000 or null' });
+      }
+      update.autoTakeProfitPct = v === null ? null : Number(v);
+    }
+    if ('autoStopLossPct' in update) {
+      const v = update.autoStopLossPct;
+      if (v !== null && (!Number.isFinite(Number(v)) || Number(v) < 5 || Number(v) > 99)) {
+        return res.status(400).json({ error: 'autoStopLossPct must be 5-99 or null' });
+      }
+      update.autoStopLossPct = v === null ? null : Number(v);
+    }
     if (Object.keys(update).length === 0) {
       return res.status(400).json({ error: 'No valid fields' });
     }
@@ -69,6 +85,8 @@ router.patch('/', requireDb, requireAuth, async (req, res) => {
         maxAlertsPerDay: true,
         alertIntervalMin: true,
         telegramAlerts: true,
+        autoTakeProfitPct: true,
+        autoStopLossPct: true,
       },
     });
     invalidateCache();

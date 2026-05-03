@@ -22,6 +22,8 @@ async function fetchActiveUsersFresh(prisma) {
       alertIntervalMin: true,
       telegramAlerts: true,
       isPaused: true,
+      autoTakeProfitPct: true,
+      autoStopLossPct: true,
       wallet: { select: { balance: true } },
     },
   });
@@ -107,58 +109,10 @@ async function getUsersForOpportunityAlert(market) {
   return out;
 }
 
-/**
- * If TELEGRAM_CHAT_ID is set and no row exists yet, create the operator user + wallet
- * so user-gated scanning can run without a prior dashboard signup.
- */
-async function seedOwnerIfNeeded() {
-  const prisma = getPrisma();
-  if (!prisma) return;
-
-  const raw = process.env.TELEGRAM_CHAT_ID;
-  if (!raw || !/^\d+$/.test(String(raw).trim())) return;
-
-  const telegramId = BigInt(String(raw).trim());
-  const existing = await prisma.user.findUnique({ where: { telegramId } });
-  if (existing) return;
-
-  const paper = parseFloat(process.env.PAPER_BALANCE) || 1000;
-  console.log('[startup] Auto-seeding owner user from TELEGRAM_CHAT_ID…');
-
-  const user = await prisma.user.create({
-    data: {
-      telegramId,
-      firstName: 'Owner',
-      authMethod: 'telegram',
-      categories: ['crypto', 'politics'],
-      riskMode: 'moderate',
-      maxAlertsPerDay: 10,
-      isPaused: false,
-      wallet: {
-        create: {
-          balance: paper,
-          startingBalance: paper,
-          brierScores: [],
-        },
-      },
-    },
-  });
-
-  await prisma.appStorage.upsert({
-    where: { key: 'botOwnerId' },
-    update: { value: user.id },
-    create: { key: 'botOwnerId', value: user.id },
-  });
-
-  invalidateCache();
-  console.log('[startup] Owner user seeded:', user.id);
-}
-
 module.exports = {
   getActiveUsers,
   hasActiveUsers,
   invalidateCache,
   getUsersForOpportunityAlert,
   canSendAlertToUser,
-  seedOwnerIfNeeded,
 };

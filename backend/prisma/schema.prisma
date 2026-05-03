@@ -30,6 +30,10 @@ model User {
   telegramAlerts Boolean  @default(true)
   isPaused       Boolean  @default(false)
 
+  // Auto-exit thresholds (null = disabled / use global defaults)
+  autoTakeProfitPct Float?  // e.g. 100 = exit when profit reaches 100% of stake (2x)
+  autoStopLossPct   Float?  // e.g. 50  = exit when loss reaches 50% of stake
+
   // Relations
   wallet         Wallet?
   positions      PaperPosition[]
@@ -108,6 +112,7 @@ model Alert {
   suggestedContracts Int
   side             String   // YES | NO
   
+  eventVolumeUsd   Float?   // event-level total volume (sum across all outcomes)
   actionTaken      String?  // bet_full | bet_half | skipped | expired
   positionId       String?  // set if bet was placed
   sentViaTelegram  Boolean  @default(false)

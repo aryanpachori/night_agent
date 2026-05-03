@@ -64,11 +64,17 @@ router.get('/history', requireDb, requireAuth, async (req, res) => {
     });
 
     const history = [];
-    for (const dayEnd of dayEnds) {
+    for (let i = 0; i < dayEnds.length; i++) {
+      const dayEnd = dayEnds[i];
       const cumPnl = closedPositions
         .filter(p => p.closedAt <= dayEnd)
         .reduce((s, p) => s + (Number(p.pnl) || 0), 0);
-      const balance = wallet.startingBalance + cumPnl;
+
+      // Last day = actual wallet balance (includes open-position effects)
+      const balance = (i === dayEnds.length - 1)
+        ? wallet.balance
+        : wallet.startingBalance + cumPnl;
+
       history.push({
         date: dayEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
         balance: Math.round(balance * 100) / 100,

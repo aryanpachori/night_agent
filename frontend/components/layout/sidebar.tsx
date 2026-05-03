@@ -3,7 +3,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { motion } from 'framer-motion'
 import type { LucideIcon } from 'lucide-react'
-import { LayoutDashboard, TrendingUp, Bell, Globe, Settings, LogOut } from 'lucide-react'
+import { LayoutDashboard, TrendingUp, Bell, Settings, LogOut } from 'lucide-react'
 import { NightAgentLogoMark } from '@/components/brand/night-agent-logo-mark'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/hooks/useAuth'
@@ -17,9 +17,8 @@ export type DashboardNavItem = {
 
 export const dashboardNavItems: DashboardNavItem[] = [
   { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-  { href: '/dashboard/positions', icon: TrendingUp, label: 'Positions' },
   { href: '/dashboard/alerts', icon: Bell, label: 'Alerts' },
-  { href: '/dashboard/markets', icon: Globe, label: 'Markets' },
+  { href: '/dashboard/positions', icon: TrendingUp, label: 'My Bets' },
   { href: '/dashboard/settings', icon: Settings, label: 'Settings' },
 ]
 
@@ -28,7 +27,7 @@ export function Sidebar() {
   const { user, logout } = useAuth()
   const { data: bot } = useBotStatus()
 
-  const displayName = user?.firstName || user?.username || user?.walletAddress?.slice(0, 6) || 'Trader'
+  const displayName = user?.firstName || user?.username || user?.walletAddress?.slice(0, 6) || 'User'
   const initial =
     (user?.firstName?.[0] || user?.username?.[0] || user?.walletAddress?.[0] || '?').toUpperCase()
   const balance = user?.wallet?.balance ?? 0

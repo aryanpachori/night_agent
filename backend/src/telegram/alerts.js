@@ -13,6 +13,7 @@ const {
 } = require('./messages');
 const wallet = require('../wallet/paperWallet');
 const { getPrisma } = require('../db/client');
+const { emitToUser } = require('../api/sseClients');
 
 let _bot = null;
 const chatId = () => process.env.TELEGRAM_CHAT_ID;
@@ -82,11 +83,24 @@ async function recordAlertRow(user, market, analysis, kellyData, sentViaTelegram
   if (!prisma || !user?.id) return;
   try {
     const conf = String(analysis.confidence || 'medium').toLowerCase();
-    await prisma.alert.create({
+
+    // Build a human-readable market question: prefer "EventTitle — OutcomeTitle"
+    const evT  = String(market.eventTitle  || '').trim();
+    const outT = String(market.outcomeTitle || '').trim();
+    let marketQuestion = '';
+    if (evT && outT && evT !== outT) {
+      marketQuestion = `${evT} — ${outT}`;
+    } else if (evT) {
+      marketQuestion = evT;
+    } else {
+      marketQuestion = market.question || '';
+    }
+
+    const alertRow = await prisma.alert.create({
       data: {
         userId: user.id,
         marketId: market.id,
-        marketQuestion: market.question || '',
+        marketQuestion,
         category: market.category ?? 'crypto',
         marketPrice: market.yesPrice,
         myProbability: analysis.probability,
@@ -98,9 +112,14 @@ async function recordAlertRow(user, market, analysis, kellyData, sentViaTelegram
         suggestedAmount: kellyData.betAmount,
         suggestedContracts: kellyData.contracts,
         side: analysis.side,
+        eventVolumeUsd: (market.eventVolumeUsd != null && market.eventVolumeUsd > 0)
+          ? market.eventVolumeUsd
+          : (market.volumeUsd != null ? Number(market.volumeUsd) : null),
         sentViaTelegram: !!sentViaTelegram,
       },
     });
+    // Push to any connected web clients immediately via SSE
+    emitToUser(user.id, 'new_alert', alertRow);
   } catch (err) {
     console.error('[alerts] Failed to store alert row:', err.message);
   }
@@ -136,8 +155,9 @@ async function sendOpportunityAlert(market, analysis, kellyFraction, betAmount, 
     ],
   };
 
-  const targetChat =
-    user != null ? (user.telegramId != null ? String(user.telegramId) : null) : chatId();
+  // Only send Telegram to users who registered via the website and have a telegramId linked.
+  // No fallback to global TELEGRAM_CHAT_ID — opportunity alerts are user-scoped.
+  const targetChat = user?.telegramId != null ? String(user.telegramId) : null;
 
   if (!deferWalletMark) {
     wallet.markMarketAlerted(market.id);
@@ -214,6 +234,24 @@ async function sendRawMessage(text) {
   await send(esc(text));
 }
 
+// ─── sendWelcomeMessage — sent to a newly registered web user who has Telegram linked ─
+async function sendWelcomeMessage(telegramId, firstName) {
+  if (!telegramId) return;
+  const { esc } = require('./messages');
+  const name = firstName ? esc(firstName) : 'there';
+  const siteUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+  const text =
+    `👋 Hey ${name}\\! Welcome to *Night Agent*\\.\n\n` +
+    `You're now connected — I'll send you bet signals here as soon as I spot a good opportunity\\.\n\n` +
+    `*How it works:*\n` +
+    `• I scan prediction markets 24/7 looking for edges\n` +
+    `• When I find one, you'll get a message here with the event, which side to bet, and the payout\n` +
+    `• You can also view all alerts and manage your bets on the dashboard\n\n` +
+    `🌐 Dashboard: ${esc(siteUrl)}\n\n` +
+    `_Alerts are only sent here if you have Telegram Alerts enabled in your settings\\._`;
+  await sendToChat(String(telegramId), text);
+}
+
 module.exports = {
   setBot,
   sendOpportunityAlert,
@@ -223,6 +261,7 @@ module.exports = {
   sendPositionPriceTick,
   sendResolvedAlert,
   sendRawMessage,
+  sendWelcomeMessage,
   getPendingOpportunity,
   getPendingOpportunityCount,
   getPendingExit,

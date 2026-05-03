@@ -1,7 +1,7 @@
 'use client'
 
 import { motion } from 'framer-motion'
-import { Wallet, TrendingUp, Target, Activity } from 'lucide-react'
+import { Wallet, TrendingUp, Target, Bell } from 'lucide-react'
 import { Topbar } from '@/components/layout/topbar'
 import { StatCard } from '@/components/dashboard/stat-card'
 import { PnlChart } from '@/components/dashboard/pnl-chart'
@@ -10,13 +10,15 @@ import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Tooltip } from '@/components/ui/tooltip'
 import DashboardSkeleton from '@/app/dashboard/loading'
+
 import { useSummaryStats, useBotStatus } from '@/hooks/useStats'
 import { useWalletHistory } from '@/hooks/useWallet'
 import { usePositions } from '@/hooks/usePositions'
-import { useAlerts } from '@/hooks/useAlerts'
+import { useAlerts, useAlertStream } from '@/hooks/useAlerts'
 import { usePauseBot } from '@/hooks/useAuth'
 import { normalizeOpenPosition, type UiOpenPosition } from '@/lib/normalize-position'
-import { formatUSD, formatPct, formatPrice, formatTimeAgo } from '@/lib/utils'
+import { formatUSD, formatPct, formatTimeAgo } from '@/lib/utils'
+import Link from 'next/link'
 
 const fadeUp = {
   initial: { opacity: 0, y: 16 },
@@ -34,6 +36,8 @@ export default function DashboardPage() {
   const { data: positionsData } = usePositions('open')
   const { data: alertsData } = useAlerts('all', 5)
   const { data: botStatus } = useBotStatus()
+  // Real-time alert delivery via SSE
+  useAlertStream(true)
   const pauseBot = usePauseBot()
 
   const openPositions: UiOpenPosition[] = (positionsData?.positions ?? []).map((row: Record<string, unknown>) =>
@@ -48,8 +52,6 @@ export default function DashboardPage() {
       </div>
     )
   }
-
-  const brier = stats.avgBrierScore
 
   return (
     <div className="flex flex-1 flex-col">
@@ -87,30 +89,24 @@ export default function DashboardPage() {
           <Card className="p-5">
             <div className="mb-3 flex items-start justify-between">
               <div className="rounded-lg bg-[var(--accent-glow)] p-2">
-                <Activity className="h-4 w-4 text-[var(--accent)]" />
+                <Bell className="h-4 w-4 text-[var(--accent)]" />
               </div>
             </div>
-            <div className="mb-1 flex items-center gap-1">
-              <p className="text-xs uppercase tracking-wider text-[var(--text-muted)]">Brier Score</p>
-              <Tooltip content="Brier Score measures probability calibration. 0.0 = perfect, 0.25 = random guessing. Lower is better.">
-                <button
-                  type="button"
-                  className="text-[10px] leading-none text-[var(--text-muted)] hover:text-[var(--accent)]"
-                  aria-label="About Brier Score"
-                >
-                  ⓘ
-                </button>
-              </Tooltip>
-            </div>
+            <p className="mb-1 text-xs uppercase tracking-wider text-[var(--text-muted)]">Alerts Today</p>
             <motion.p
               className="font-mono text-2xl font-bold text-[var(--text-primary)]"
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.4 }}
             >
-              {brier != null ? brier.toFixed(2) : '—'}
+              {stats.alertsTodayCount ?? 0}
+              {stats.maxAlertsPerDay ? (
+                <span className="ml-1 font-mono text-sm font-normal text-[var(--text-muted)]">
+                  / {stats.maxAlertsPerDay}
+                </span>
+              ) : null}
             </motion.p>
-            <p className="mt-1 text-xs text-[var(--text-muted)]">Model accuracy — lower is better (perfect = 0)</p>
+            <p className="mt-1 text-xs text-[var(--text-muted)]">Bot signals sent to you today</p>
           </Card>
         </motion.div>
 
@@ -158,8 +154,7 @@ export default function DashboardPage() {
             </h3>
             <div className="space-y-2">
               {openPositions.map((pos) => {
-                const pnlPositive = pos.pnl >= 0
-                const favorable = currentPriceTrend(pos) === 'up'
+                const winning = pos.pnl >= 0
                 return (
                   <div
                     key={pos.id}
@@ -171,25 +166,19 @@ export default function DashboardPage() {
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-xs text-[var(--text-primary)]">{pos.marketQuestion}</p>
                       <p className="text-[10px] text-[var(--text-muted)]">
-                        {pos.contracts} contracts · Entry {formatPrice(pos.entryPrice)} · Now{' '}
-                        <span
-                          className={`font-mono font-semibold ${favorable ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}
-                        >
-                          {favorable ? '↑' : '↓'} {formatPrice(pos.currentPrice)}
+                        Bet {formatUSD(pos.totalCost)} → now worth{' '}
+                        <span className="font-mono font-semibold text-[var(--text-primary)]">
+                          {formatUSD(pos.currentValue)}
                         </span>
+                        {pos.daysLeft ? ` · ${pos.daysLeft}d left` : ''}
                       </p>
                     </div>
                     <div className="ml-auto shrink-0 border-t border-[var(--border)] pt-2 text-right sm:border-t-0 sm:pt-0">
                       <p
-                        className={`font-mono text-xs font-semibold ${pnlPositive ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}
+                        className={`font-mono text-xs font-semibold ${winning ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}
                       >
-                        {pnlPositive ? '+' : ''}
+                        {winning ? '🟢 +' : '🔴 '}
                         {formatUSD(pos.pnl)}
-                      </p>
-                      <p
-                        className={`font-mono text-[10px] ${pnlPositive ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}
-                      >
-                        {formatPct(pos.pnlPercent)}
                       </p>
                     </div>
                   </div>
@@ -202,35 +191,61 @@ export default function DashboardPage() {
           </Card>
 
           <Card className="p-5">
-            <h3 className="mb-4 text-sm font-semibold text-[var(--text-primary)]">Recent Alerts</h3>
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-[var(--text-primary)]">Recent Alerts</h3>
+              <Link href="/dashboard/alerts" className="text-[10px] text-[var(--text-muted)] hover:text-[var(--accent-bright)] transition-colors">
+                View all →
+              </Link>
+            </div>
             <div className="space-y-2">
               {(alertsData?.alerts ?? []).map((alert: Record<string, unknown>) => {
                 const action = String(alert.actionTaken ?? '')
-                const isBet = action.startsWith('bet')
+                const hasActed = action !== ''
+                const isBet = action === 'bet_full' || action === 'bet_half'
                 const createdAt = alert.createdAt ? new Date(String(alert.createdAt)) : new Date()
-                const edge = Number(alert.edge ?? 0)
-                const confidence = String(alert.confidence ?? 'medium')
-                const confVariant: Record<string, 'success' | 'warning' | 'muted'> = { high: 'success', medium: 'warning', low: 'muted' }
+                const side = String(alert.side ?? 'YES')
+                const marketId = String(alert.marketId ?? '')
+                const alertId = String(alert.id ?? '')
+                const stake = Math.round(Number(alert.suggestedAmount ?? 50))
+                const winAmount = Math.round(Number(alert.suggestedContracts ?? 0))
+                const profit = winAmount - stake
+                // Use pre-computed eventName from API, or fallback
+                const eventName = String(alert.eventName ?? alert.marketQuestion ?? 'Market event')
+                const dir = side === 'YES' ? '↑ UP' : '↓ DOWN'
+                const dirColor = side === 'YES' ? 'text-[var(--success)]' : 'text-[var(--danger)]'
                 return (
-                  <div key={String(alert.id)} className="flex items-start gap-3 rounded-lg bg-[var(--bg-secondary)] p-3">
-                    <div
-                      className={`mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full ${isBet ? 'bg-[var(--success)]' : 'bg-[var(--text-muted)]'}`}
-                    />
+                  <div key={alertId} className="flex items-start gap-3 rounded-lg bg-[var(--bg-secondary)] p-3">
+                    <div className={`mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full ${isBet ? 'bg-[var(--success)]' : hasActed ? 'bg-[var(--text-muted)]' : 'bg-[var(--accent)]'}`} />
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-xs text-[var(--text-primary)]">{String(alert.marketQuestion ?? '')}</p>
+                      <p className="truncate text-xs font-medium text-[var(--text-primary)]">{eventName}</p>
                       <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
-                        <Badge variant={isBet ? 'success' : 'muted'} size="sm">
-                          {isBet ? `BET ${String(alert.side ?? '')}` : 'SKIPPED'}
-                        </Badge>
-                        <Badge variant={confVariant[confidence] ?? 'muted'} size="sm" className="capitalize">
-                          {confidence}
-                        </Badge>
-                        <span className="font-mono text-[10px] text-[var(--accent-bright)]">Edge {formatPct(edge * 100, 0)}</span>
+                        <span className={`text-[10px] font-semibold ${dirColor}`}>{dir}</span>
+                        {profit > 0 && (
+                          <span className="font-mono text-[10px] text-[var(--text-secondary)]">
+                            ${stake} → win +${profit}
+                          </span>
+                        )}
                       </div>
                     </div>
-                    <span className="flex-shrink-0 text-[10px] text-[var(--text-muted)]">
-                      {formatTimeAgo(createdAt)}
-                    </span>
+                    <div className="flex flex-shrink-0 flex-col items-end gap-1">
+                      <span className="text-[10px] text-[var(--text-muted)]">{formatTimeAgo(createdAt)}</span>
+                      {hasActed ? (
+                        <span className={`rounded-full border px-2 py-0.5 text-[9px] font-medium ${
+                          isBet
+                            ? 'border-[var(--success)]/30 bg-[var(--success-dim)] text-[var(--success)]'
+                            : 'border-[var(--border)] bg-[var(--bg-card)] text-[var(--text-muted)]'
+                        }`}>
+                          {isBet ? '✅ Bet' : '⏭ Skipped'}
+                        </span>
+                      ) : marketId ? (
+                        <Link
+                          href={`/dashboard/markets/${marketId}?side=${side}&amount=${stake}&alertId=${alertId}`}
+                          className="rounded border border-[var(--accent)]/40 bg-[var(--accent-glow)] px-2 py-0.5 font-mono text-[9px] font-semibold text-[var(--accent-bright)] transition-all hover:border-[var(--accent)]/70"
+                        >
+                          Bet →
+                        </Link>
+                      ) : null}
+                    </div>
                   </div>
                 )
               })}

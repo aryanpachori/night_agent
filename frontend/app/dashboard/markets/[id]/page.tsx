@@ -1,26 +1,21 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { use } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { Topbar } from '@/components/layout/topbar'
 import { Card } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { MarketPriceChart, type PriceHistoryPoint } from '@/components/markets/market-price-chart'
-import { cn, formatUSD, formatVolume, formatPrice, formatPct } from '@/lib/utils'
+import { cn, formatUSD, formatPrice } from '@/lib/utils'
 import { daysLeftFromClose } from '@/lib/market-utils'
-import { Sparkles, TrendingUp, TrendingDown, BarChart2, Clock, ArrowLeft } from 'lucide-react'
+import { TrendingUp, TrendingDown, Clock, ArrowLeft, Sparkles } from 'lucide-react'
 import Link from 'next/link'
 import { useMarket } from '@/hooks/useMarkets'
 import { usePlaceBet } from '@/hooks/usePositions'
-
-const confidenceVariant: Record<string, 'success' | 'warning' | 'muted'> = {
-  high: 'success',
-  medium: 'warning',
-  low: 'muted',
-}
+import { useRecordAlertAction } from '@/hooks/useAlerts'
 
 function pickReasoning(analysis: unknown): string | null {
   if (!analysis || typeof analysis !== 'object') return null
@@ -36,54 +31,39 @@ function pickConfidence(analysis: unknown): string | undefined {
   return typeof o.confidence === 'string' ? o.confidence : undefined
 }
 
-function pickKeyFactors(analysis: unknown): { label: string; delta: number }[] {
+function pickKeyFactors(analysis: unknown): string[] {
   if (!analysis || typeof analysis !== 'object') return []
   const o = analysis as Record<string, unknown>
   const kf = o.keyFactors
   if (!Array.isArray(kf)) return []
   return kf.map((item) => {
-    if (typeof item === 'string') return { label: item, delta: 0 }
+    if (typeof item === 'string') return item
     if (item && typeof item === 'object') {
       const x = item as Record<string, unknown>
-      return {
-        label: String(x.label ?? x.factor ?? 'Factor'),
-        delta: Number(x.delta ?? x.weight ?? 0),
-      }
+      return String(x.label ?? x.factor ?? '')
     }
-    return { label: '?', delta: 0 }
-  })
-}
-
-function pickModelProbability(analysis: unknown): number | undefined {
-  if (!analysis || typeof analysis !== 'object') return undefined
-  const o = analysis as Record<string, unknown>
-  const v = o.myProbability ?? o.modelProbability ?? o.probability
-  if (typeof v === 'number') return v
-  if (typeof v === 'string') return Number(v)
-  return undefined
-}
-
-function pickEdge(analysis: unknown): number | undefined {
-  if (!analysis || typeof analysis !== 'object') return undefined
-  const o = analysis as Record<string, unknown>
-  const v = o.edge
-  if (typeof v === 'number') return v
-  if (typeof v === 'string') return Number(v)
-  return undefined
+    return ''
+  }).filter(Boolean)
 }
 
 export default function MarketDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
+  const searchParams = useSearchParams()
   const { data, isLoading, isError } = useMarket(id)
   const placeBet = usePlaceBet()
+  const recordAlertAction = useRecordAlertAction()
+
+  // Pre-fill from alert query params when navigated from an alert
+  const alertId = searchParams.get('alertId') ?? ''
+  const paramSide = searchParams.get('side')
+  const paramAmount = searchParams.get('amount')
+  const fromAlert = Boolean(alertId)
 
   const market = data?.market as Record<string, unknown> | undefined
   const analysis = data?.analysis
   const priceHistory = (data?.priceHistory ?? []) as PriceHistoryPoint[]
 
   const question = String(market?.question ?? '')
-  const category = String(market?.category ?? '')
-  const volume = Number(market?.volume ?? 0)
   const yesPrice = Number(market?.yesPrice ?? 0)
   const noPrice = Number(market?.noPrice ?? 0)
   const daysLeft = daysLeftFromClose(market?.closeTime)
@@ -91,35 +71,50 @@ export default function MarketDetailPage({ params }: { params: Promise<{ id: str
   const reasoning = pickReasoning(analysis)
   const confidence = pickConfidence(analysis)
   const keyFactors = pickKeyFactors(analysis)
-  const modelProb = pickModelProbability(analysis)
-  const edge = pickEdge(analysis)
 
-  const [side, setSide] = useState<'YES' | 'NO'>('YES')
-  const [amount, setAmount] = useState('50')
+  const confidenceLabel =
+    confidence === 'high' ? '✅ High confidence' :
+    confidence === 'medium' ? '⚡ Medium confidence' :
+    confidence ? '⚠️ Low confidence' : null
+
+  // Initialize side directly from URL param — no effect delay that causes wrong-side flash
+  const [side, setSide] = useState<'YES' | 'NO'>(paramSide === 'NO' ? 'NO' : 'YES')
+  const [amount, setAmount] = useState(paramAmount && Number(paramAmount) > 0 ? paramAmount : '50')
+
+  // Keep in sync if params change (e.g. browser back/forward)
+  useEffect(() => {
+    if (paramSide === 'YES' || paramSide === 'NO') setSide(paramSide)
+    if (paramAmount && Number(paramAmount) > 0) setAmount(paramAmount)
+  }, [paramSide, paramAmount])
 
   const price = side === 'YES' ? yesPrice : noPrice
   const amountNum = Number(amount)
   const contracts = amountNum > 0 && price > 0 ? Math.floor(amountNum / price) : 0
-  const payout = contracts
-  const profit = payout - amountNum
+  const potentialWin = contracts   // each contract pays $1
+  const profit = potentialWin - amountNum
 
   async function handlePlaceBet() {
     if (!market || contracts <= 0 || amountNum < 1) return
-    await placeBet.mutateAsync({
+    const result = await placeBet.mutateAsync({
       marketId: id,
       marketQuestion: question,
-      category,
+      category: String(market?.category ?? ''),
       side,
       entryPrice: price,
       amount: amountNum,
     })
+    if (alertId) {
+      const res = result as { position?: { id?: string } } | null
+      const positionId = res?.position?.id ?? ''
+      void recordAlertAction.mutateAsync({ id: alertId, actionTaken: 'bet_full', positionId: positionId || undefined })
+    }
   }
 
   if (isLoading) {
     return (
       <div className="flex flex-1 flex-col">
-        <Topbar title="Market Detail" subtitle={id} />
-        <p className="p-6 text-xs text-[var(--text-muted)]">Loading market…</p>
+        <Topbar title="Place Bet" subtitle={id} />
+        <p className="p-6 text-xs text-[var(--text-muted)]">Loading…</p>
       </div>
     )
   }
@@ -127,10 +122,10 @@ export default function MarketDetailPage({ params }: { params: Promise<{ id: str
   if (isError || !market) {
     return (
       <div className="flex flex-1 flex-col">
-        <Topbar title="Market Detail" subtitle={id} />
-        <p className="p-6 text-xs text-[var(--danger)]">Market not found.</p>
-        <Link href="/dashboard/markets" className="px-6 text-xs text-[var(--accent)] hover:underline">
-          Back to Markets
+        <Topbar title="Place Bet" subtitle={id} />
+        <p className="p-6 text-xs text-[var(--danger)]">Could not load this market.</p>
+        <Link href="/dashboard/alerts" className="px-6 text-xs text-[var(--accent)] hover:underline">
+          ← Back to Alerts
         </Link>
       </div>
     )
@@ -138,118 +133,90 @@ export default function MarketDetailPage({ params }: { params: Promise<{ id: str
 
   return (
     <div className="flex flex-1 flex-col">
-      <Topbar title="Market Detail" subtitle={id} />
+      <Topbar title={fromAlert ? 'Place Bet' : 'Market Detail'} subtitle={fromAlert ? 'Review and confirm your bet' : id} />
 
       <div className="space-y-5 p-4 pb-6 sm:p-6">
-        <Link
-          href="/dashboard/markets"
-          className="inline-flex items-center gap-1.5 text-xs text-[var(--text-muted)] transition-colors hover:text-[var(--text-primary)]"
-        >
-          <ArrowLeft className="h-3 w-3" /> Back to Markets
-        </Link>
+        {/* Back links */}
+        <div className="flex flex-wrap items-center gap-3">
+          <Link
+            href={fromAlert ? '/dashboard/alerts' : '/dashboard/markets'}
+            className="inline-flex items-center gap-1.5 text-xs text-[var(--text-muted)] transition-colors hover:text-[var(--text-primary)]"
+          >
+            <ArrowLeft className="h-3 w-3" /> {fromAlert ? 'Back to Alerts' : 'Back to Markets'}
+          </Link>
+        </div>
 
-        <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
-          <div className="space-y-4 lg:col-span-2">
+        {/* Alert context banner */}
+        {fromAlert && (
+          <div className="flex items-center gap-2 rounded-xl border border-[var(--accent)]/30 bg-[var(--accent-glow)] px-4 py-3 text-xs text-[var(--accent-bright)]">
+            <Sparkles className="h-3.5 w-3.5 shrink-0" />
+            Bot recommendation — side and amount are pre-filled for you.
+          </div>
+        )}
+
+        <div className={cn('grid grid-cols-1 gap-5', fromAlert ? '' : 'lg:grid-cols-3')}>
+          {/* Left / main column */}
+          <div className={cn('space-y-4', fromAlert ? '' : 'lg:col-span-2')}>
+
+            {/* Event card */}
             <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
               <Card className="p-5">
-                <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-                  <div className="min-w-0">
-                    <h2 className="mb-2 text-base font-semibold leading-snug text-[var(--text-primary)] sm:text-lg">
-                      {question}
-                    </h2>
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--text-muted)]">
-                      <span className="flex items-center gap-1">
-                        <BarChart2 className="h-3 w-3" />
-                        <span className="font-mono">{formatVolume(volume)}</span>
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Clock className="h-3 w-3" />
-                        <span className="font-mono">{daysLeft} days left</span>
-                      </span>
-                      <span className="capitalize text-[var(--text-secondary)]">{category}</span>
-                    </div>
-                  </div>
-                  {Boolean(market?.isNew) && (
-                    <Badge variant="accent" className="w-fit shrink-0">
-                      NEW
-                    </Badge>
+                <h2 className="mb-3 text-base font-semibold leading-snug text-[var(--text-primary)] sm:text-lg">
+                  {question}
+                </h2>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--text-muted)]">
+                  {daysLeft != null && (
+                    <span className="flex items-center gap-1">
+                      <Clock className="h-3 w-3" />
+                      <span>{daysLeft} days left to resolve</span>
+                    </span>
                   )}
                 </div>
 
-                <div className="mb-5 grid grid-cols-2 gap-3">
+                {/* YES / NO prices — simple */}
+                <div className="mt-4 grid grid-cols-2 gap-3">
                   <div className="rounded-xl border border-[var(--success)]/30 bg-[var(--success-dim)] p-4 text-center">
                     <p className="mb-1 text-xs font-medium text-[var(--success)]">YES</p>
-                    <p className="font-mono text-2xl font-bold text-[var(--success)]">{formatPrice(yesPrice)}</p>
+                    <p className="font-mono text-xl font-bold text-[var(--success)]">{formatPrice(yesPrice)}</p>
+                    <p className="mt-0.5 text-[10px] text-[var(--success)]/70">per share</p>
                   </div>
                   <div className="rounded-xl border border-[var(--danger)]/30 bg-[var(--danger-dim)] p-4 text-center">
                     <p className="mb-1 text-xs font-medium text-[var(--danger)]">NO</p>
-                    <p className="font-mono text-2xl font-bold text-[var(--danger)]">{formatPrice(noPrice)}</p>
+                    <p className="font-mono text-xl font-bold text-[var(--danger)]">{formatPrice(noPrice)}</p>
+                    <p className="mt-0.5 text-[10px] text-[var(--danger)]/70">per share</p>
                   </div>
                 </div>
 
-                <MarketPriceChart points={priceHistory} />
+                {/* Only show chart on non-alert full-market view */}
+                {!fromAlert && <MarketPriceChart points={priceHistory} />}
               </Card>
             </motion.div>
 
-            {(reasoning || modelProb != null || edge != null || keyFactors.length > 0) && (
+            {/* Bot analysis card — shown only when NOT from alert (or on full view) */}
+            {!fromAlert && (reasoning || confidenceLabel || keyFactors.length > 0) && (
               <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, delay: 0.1 }}>
                 <Card className="p-5">
                   <div className="mb-4 flex items-center gap-2">
                     <Sparkles className="h-4 w-4 text-[var(--accent)]" />
-                    <h3 className="text-sm font-semibold text-[var(--text-primary)]">AI Analysis</h3>
-                    {confidence && (
-                      <Badge variant={confidenceVariant[confidence] ?? 'muted'} size="sm" className="ml-auto capitalize">
-                        {confidence} confidence
-                      </Badge>
+                    <h3 className="text-sm font-semibold text-[var(--text-primary)]">Why the bot likes this</h3>
+                    {confidenceLabel && (
+                      <span className="ml-auto text-xs text-[var(--text-secondary)]">{confidenceLabel}</span>
                     )}
-                  </div>
-
-                  <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4">
-                    <div className="rounded-xl bg-[var(--bg-secondary)] p-3 text-center">
-                      <p className="mb-1 text-[10px] uppercase tracking-wider text-[var(--text-muted)]">Market Price</p>
-                      <p className="font-mono text-xl font-bold text-[var(--text-primary)]">{formatPrice(yesPrice)}</p>
-                      <p className="text-[10px] text-[var(--text-muted)]">YES</p>
-                    </div>
-                    <div className="rounded-xl border border-[var(--accent)]/25 bg-[var(--accent-glow)] p-3 text-center">
-                      <p className="mb-1 text-[10px] uppercase tracking-wider text-[var(--accent)]">AI Estimate</p>
-                      <p className="font-mono text-xl font-bold text-[var(--accent-bright)]">
-                        {modelProb != null ? `${Math.round(modelProb * 100)}¢` : 'N/A'}
-                      </p>
-                      <p className="text-[10px] text-[var(--accent-dim)]">model output</p>
-                    </div>
-                    <div className="rounded-xl bg-[var(--bg-secondary)] p-3 text-center">
-                      <p className="mb-1 text-[10px] uppercase tracking-wider text-[var(--text-muted)]">Edge</p>
-                      <p
-                        className={`font-mono text-xl font-bold ${(edge ?? 0) > 0.1 ? 'text-[var(--success)]' : 'text-[var(--warning)]'}`}
-                      >
-                        {edge != null ? formatPct(edge * 100, 0) : 'N/A'}
-                      </p>
-                      <p className="text-[10px] text-[var(--text-muted)]">vs market</p>
-                    </div>
                   </div>
 
                   {reasoning && <p className="mb-4 text-xs leading-relaxed text-[var(--text-secondary)]">{reasoning}</p>}
 
                   {keyFactors.length > 0 && (
-                    <div className="mb-4">
-                      <p className="mb-2 text-[10px] uppercase tracking-wider text-[var(--text-muted)]">Key Factors</p>
+                    <div>
+                      <p className="mb-2 text-[10px] uppercase tracking-wider text-[var(--text-muted)]">Key factors</p>
                       <div className="flex flex-wrap gap-1.5">
-                        {keyFactors.map(({ label, delta }) => (
-                          <div
+                        {keyFactors.map((label) => (
+                          <span
                             key={label}
-                            className="flex items-center gap-1.5 rounded-full border border-[var(--border-bright)] bg-[var(--bg-secondary)] px-2.5 py-1"
+                            className="rounded-full border border-[var(--border-bright)] bg-[var(--bg-secondary)] px-2.5 py-1 text-xs text-[var(--text-secondary)]"
                           >
-                            <span className="text-xs text-[var(--text-secondary)]">{label}</span>
-                            <span
-                              className={cn(
-                                'font-mono text-xs font-semibold',
-                                delta > 0 ? 'text-[var(--success)]' : 'text-[var(--danger)]',
-                              )}
-                            >
-                              {delta > 0 ? '+' : ''}
-                              {delta}%
-                            </span>
-                          </div>
+                            {label}
+                          </span>
                         ))}
                       </div>
                     </div>
@@ -257,20 +224,54 @@ export default function MarketDetailPage({ params }: { params: Promise<{ id: str
                 </Card>
               </motion.div>
             )}
+
+            {/* On alert view, show reasoning inline below the event card */}
+            {fromAlert && (reasoning || confidenceLabel) && (
+              <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, delay: 0.05 }}>
+                <Card className="p-4">
+                  {confidenceLabel && (
+                    <p className="mb-2 text-xs font-semibold text-[var(--text-secondary)]">{confidenceLabel}</p>
+                  )}
+                  {reasoning && <p className="text-xs leading-relaxed text-[var(--text-muted)]">{reasoning}</p>}
+                </Card>
+              </motion.div>
+            )}
           </div>
 
-          <div className="space-y-4">
-            <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, delay: 0.15 }}>
-              <Card className="p-5">
-                <h3 className="mb-4 text-sm font-semibold text-[var(--text-primary)]">Place Paper Bet</h3>
+          {/* Bet form — sidebar on full view, full-width below on alert view */}
+          <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, delay: 0.15 }}>
+            <Card className="p-5">
+              <h3 className="mb-4 text-sm font-semibold text-[var(--text-primary)]">
+                {fromAlert ? 'Confirm Your Bet' : 'Place a Bet'}
+              </h3>
 
+              {/* When from alert: show locked side badge. When manual: show toggle */}
+              {fromAlert ? (
+                <div className={`mb-4 flex items-center gap-3 rounded-xl border p-3 ${
+                  side === 'YES'
+                    ? 'border-[var(--success)]/40 bg-[var(--success-dim)]'
+                    : 'border-[var(--danger)]/40 bg-[var(--danger-dim)]'
+                }`}>
+                  <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-bold ${
+                    side === 'YES' ? 'bg-[var(--success)]/20 text-[var(--success)]' : 'bg-[var(--danger)]/20 text-[var(--danger)]'
+                  }`}>
+                    {side === 'YES' ? '↑' : '↓'}
+                  </div>
+                  <div>
+                    <p className={`text-xs font-semibold ${side === 'YES' ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>
+                      Betting {side} on this market
+                    </p>
+                    <p className="text-[10px] text-[var(--text-muted)]">Side pre-set by the bot</p>
+                  </div>
+                </div>
+              ) : (
                 <div className="mb-4 grid grid-cols-2 gap-2">
                   {(['YES', 'NO'] as const).map((s) => (
                     <button
                       key={s}
                       type="button"
                       onClick={() => setSide(s)}
-                      className={`rounded-xl border py-2 text-sm font-semibold transition-all ${
+                      className={`rounded-xl border py-2.5 text-sm font-semibold transition-all ${
                         side === s
                           ? s === 'YES'
                             ? 'border-[var(--success)]/40 bg-[var(--success-dim)] text-[var(--success)]'
@@ -282,72 +283,55 @@ export default function MarketDetailPage({ params }: { params: Promise<{ id: str
                     </button>
                   ))}
                 </div>
+              )}
 
-                <div className="mb-4 space-y-3">
-                  <Input label="Amount" prefix="$" value={amount} onChange={(e) => setAmount(e.target.value)} type="number" min="1" />
-                  {amountNum > 0 && amountNum < 1 && (
-                    <p className="mt-1 text-xs text-[var(--warning)]">Minimum paper bet is $1.</p>
-                  )}
+              {/* Amount input */}
+              <div className="mb-5">
+                <Input label="How much to bet?" prefix="$" value={amount} onChange={(e) => setAmount(e.target.value)} type="number" min="1" />
+                {amountNum > 0 && amountNum < 1 && (
+                  <p className="mt-1 text-xs text-[var(--warning)]">Minimum bet is $1.</p>
+                )}
+              </div>
+
+              {/* Plain-English payout breakdown */}
+              <div className="mb-5 space-y-2.5 rounded-xl bg-[var(--bg-secondary)] p-4 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-[var(--text-muted)]">You put in</span>
+                  <span className="font-mono font-semibold text-[var(--text-primary)]">{formatUSD(amountNum)}</span>
                 </div>
-
-                <div className="mb-4 space-y-2 text-xs">
-                  {[
-                    ['Price', formatPrice(price)],
-                    ['Contracts', contracts.toString()],
-                    ['Potential Payout', formatUSD(payout)],
-                    ['Potential Profit', `+${formatUSD(profit)}`],
-                    ['Max Loss', formatUSD(amountNum)],
-                  ].map(([label, value]) => (
-                    <div key={label} className="flex items-center justify-between border-b border-[var(--border)] py-1.5">
-                      <span className="text-[var(--text-muted)]">{label}</span>
-                      <span
-                        className={`font-mono font-semibold ${
-                          label === 'Potential Profit'
-                            ? 'text-[var(--success)]'
-                            : label === 'Max Loss'
-                              ? 'text-[var(--danger)]'
-                              : 'text-[var(--text-primary)]'
-                        }`}
-                      >
-                        {value}
-                      </span>
-                    </div>
-                  ))}
+                <div className="flex items-center justify-between">
+                  <span className="text-[var(--text-muted)]">If {side} wins</span>
+                  <span className="font-mono font-semibold text-[var(--success)]">+{formatUSD(profit)}</span>
                 </div>
-
-                <Button
-                  variant="primary"
-                  size="md"
-                  className="w-full"
-                  disabled={placeBet.isPending || contracts <= 0 || amountNum < 1}
-                  icon={side === 'YES' ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
-                  onClick={() => void handlePlaceBet()}
-                >
-                  Buy {side} — {formatUSD(Number(amount) || 0)}
-                </Button>
-              </Card>
-            </motion.div>
-
-            <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, delay: 0.2 }}>
-              <Card className="p-5">
-                <h3 className="mb-3 text-sm font-semibold text-[var(--text-primary)]">Market Info</h3>
-                <div className="space-y-2.5 text-xs">
-                  {[
-                    ['Volume', formatVolume(volume)],
-                    ['Category', category],
-                    ['Days Left', `${daysLeft} days`],
-                    ['Market ID', id],
-                    ['Platform', 'Jupiter Prediction'],
-                  ].map(([label, value]) => (
-                    <div key={label} className="flex justify-between gap-3">
-                      <span className="shrink-0 text-[var(--text-muted)]">{label}</span>
-                      <span className="break-all text-right font-mono capitalize text-[var(--text-secondary)]">{value}</span>
-                    </div>
-                  ))}
+                <div className="flex items-center justify-between">
+                  <span className="text-[var(--text-muted)]">Total payout</span>
+                  <span className="font-mono font-semibold text-[var(--text-primary)]">{formatUSD(potentialWin)}</span>
                 </div>
-              </Card>
-            </motion.div>
-          </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[var(--text-muted)]">Win chance (market)</span>
+                  <span className="font-mono font-semibold text-[var(--text-secondary)]">
+                    {((side === 'YES' ? yesPrice : noPrice) * 100).toFixed(0)}%
+                  </span>
+                </div>
+                <div className="flex items-center justify-between border-t border-[var(--border)] pt-2">
+                  <span className="text-[var(--text-muted)]">Max you can lose</span>
+                  <span className="font-mono font-semibold text-[var(--danger)]">{formatUSD(amountNum)}</span>
+                </div>
+              </div>
+
+              <Button
+                variant="primary"
+                size="md"
+                className="w-full"
+                loading={placeBet.isPending}
+                disabled={placeBet.isPending || contracts <= 0 || amountNum < 1}
+                icon={side === 'YES' ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
+                onClick={() => void handlePlaceBet()}
+              >
+                {fromAlert ? `Confirm — Bet ${side} ${formatUSD(amountNum)}` : `Bet ${side} — ${formatUSD(amountNum)}`}
+              </Button>
+            </Card>
+          </motion.div>
         </div>
       </div>
     </div>

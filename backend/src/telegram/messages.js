@@ -167,19 +167,19 @@ function balanceMessage(stats) {
 
 // ─── Positions ────────────────────────────────────────────────────────────────
 function positionsMessage(positions) {
-  if (positions.length === 0) return 'No open positions\\.';
+  if (positions.length === 0) return 'No open bets yet\\.';
   const lines = positions.map((p, i) => {
     const cur  = p.currentPrice ?? p.entryPrice;
-    const unreal = p.contracts * cur - p.totalCost;
+    const worth = p.contracts * cur;
+    const unreal = worth - p.totalCost;
+    const pnlStr = unreal >= 0 ? `\\+${escUsd(unreal)} ✅` : `\\-${escUsd(Math.abs(unreal))} 🔴`;
     const title  = positionCompactTitle(p);
-    const volE = p.volumeUsdAtEntry != null && Number.isFinite(p.volumeUsdAtEntry)
-      ? ` \\| Vol: ${escUsd(p.volumeUsdAtEntry)}` : '';
     const endB = p.closeTime
-      ? ` \\| Ends: ${escDateUtc(new Date(p.closeTime))}`
+      ? ` \\| ${esc(String(daysLeftFromClose(new Date(p.closeTime)) ?? '?'))}d left`
       : '';
-    return `${i + 1}\\. *${p.side}* — ${title}\n   ${escFmt(p.entryPrice * 100, 1)}→${escFmt(cur * 100, 1)}¢ \\| U: ${esc(sign(unreal) + usd(unreal))} \\| ${p.contracts} ct${endB}${volE}`;
+    return `${i + 1}\\. *${esc(p.side)}* — ${title}\n   Bet: *${escUsd(p.totalCost)}* → now *${escUsd(worth)}* \\| ${pnlStr}${endB}`;
   });
-  return `*Open positions \\(${positions.length}\\)*\n${DIV}\n${lines.join('\n\n')}`;
+  return `*Your open bets \\(${positions.length}\\)*\n${DIV}\n${lines.join('\n\n')}`;
 }
 
 // ─── History ──────────────────────────────────────────────────────────────────
@@ -291,24 +291,33 @@ function formatBetTargetHeader(market) {
 
 // ─── Opportunity ──────────────────────────────────────────────────────────────
 function opportunityMessage(market, analysis, kelly) {
-  const { betAmount, contracts, entryPrice, halfBetAmount, halfContracts } = kelly;
-  const edgeF = calculateEdge(analysis.probability, market.yesPrice);
-  const evR  = calculateEV(analysis.probability, market.yesPrice);
-  const edgePct   = (edgeF * 100).toFixed(1);
-  const evCh = evR.ev >= 0 ? `\\+${esc(fmt(evR.ev, 3))}` : `\\-${esc(fmt(-evR.ev, 3))}`;
+  const { betAmount, contracts, entryPrice, halfBetAmount } = kelly;
+  const side      = analysis.side || 'YES';
+  // Payout = contracts (each pays $1 at resolution); profit = payout - stake
+  const payout    = contracts;
+  const profit    = payout - betAmount;
+  const halfPayout = Math.floor(halfBetAmount / entryPrice);
+  const halfProfit = halfPayout - halfBetAmount;
 
-  const sideHint = analysis.side
-    ? `*Side:* ${esc(analysis.side)} \\(entry \\~ ${escFmt(entryPrice * 100, 1)}¢\\)\n`
-    : '';
-  const timing = eventTimingVolumeLine(market);
-  const noPx = 1 - market.yesPrice;
-  return `*New opportunity*\n${DIV}\n${formatBetTargetHeader(market)}\n${sideHint}${timing ? `${timing}\n` : ''}${DIV}\n` +
-    `YES ask: *${escFmt(market.yesPrice * 100, 1)}¢* \\| NO ask: *${escFmt(noPx * 100, 1)}¢* \\(implied P\\(YES\\) ${escPct(market.yesPrice)}\\)\n` +
-    `Model P\\(YES\\): *${escPct(analysis.probability)}*\n` +
-    `Edge: *${esc(edgePct)}%* on ${esc(analysis.side || evR.side)} \\| EV \\$1: *${evCh}*\n` +
-    `Confidence: ${esc(analysis.confidence.toUpperCase())}\n${DIV}\n_${esc(analysis.reasoning)}_\n${DIV}\n` +
-    `Full bet: *${escUsd(betAmount)}* \\(${contracts} contracts @ ${escFmt(entryPrice * 100, 1)}¢ for ${esc(analysis.side || evR.side)}\\)\n` +
-    `Half bet: *${escUsd(halfBetAmount)}* \\(${halfContracts} contracts\\)`;
+  const daysLeft  = daysLeftFromClose(market.closeTime);
+  const daysStr   = daysLeft != null ? ` \\(${esc(String(daysLeft))}d left\\)` : '';
+  const confidenceLabel =
+    analysis.confidence === 'high' ? 'High ✅' :
+    analysis.confidence === 'medium' ? 'Medium ⚡' : 'Low ⚠️';
+
+  return (
+    `*📣 New Bet Signal*\n${DIV}\n` +
+    `${formatBetTargetHeader(market)}\n` +
+    `*Bet:* ${esc(side)}${daysStr}\n` +
+    `${DIV}\n` +
+    `💵 Put in *${escUsd(betAmount)}* → win *${escUsd(payout)}* \\(profit \\+${escUsd(profit)}\\)\n` +
+    `⚠️ Max loss: *${escUsd(betAmount)}*\n` +
+    `${DIV}\n` +
+    `Bot confidence: *${esc(confidenceLabel)}*\n` +
+    `_${esc(analysis.reasoning)}_\n` +
+    `${DIV}\n` +
+    `Smaller bet: *${escUsd(halfBetAmount)}* → win *${escUsd(halfPayout)}* \\(profit \\+${escUsd(halfProfit)}\\)`
+  );
 }
 
 // ─── Open position price tick \\(focus tracking\\) ─────────────────────────────
@@ -329,58 +338,41 @@ function positionInsightMessage(position, marketSnap, freshEstimate, opts = {}) 
   const curPrice = marketSnap
     ? (side === 'YES' ? marketSnap.yesPrice : marketSnap.noPrice)
     : (position.currentPrice ?? position.entryPrice);
-  const unrealized = (position.contracts * curPrice) - position.totalCost;
-  const crowdYes = marketSnap ? escFmt(marketSnap.yesPrice * 100, 1) : '…';
+  const currentWorth = position.contracts * curPrice;
+  const unrealized   = currentWorth - position.totalCost;
+  const pnlStr       = unrealized >= 0
+    ? `\\+${escUsd(unrealized)} ✅`
+    : `\\-${escUsd(Math.abs(unrealized))} 🔴`;
 
   const closeForLine = marketSnap
     ? (marketSnap.closeTime || (position.closeTime ? new Date(position.closeTime) : null))
     : (position.closeTime ? new Date(position.closeTime) : null);
-  const volForLine = marketSnap ? marketSnap.volumeUsd : position.volumeUsdAtEntry;
-  const dlVal      = closeForLine ? daysLeftFromClose(closeForLine) : null;
-  const timingLine = (closeForLine || volForLine != null)
-    ? eventTimingVolumeLine({
-        closeTime: closeForLine || undefined,
-        daysLeft: dlVal,
-        volumeUsd: volForLine,
-      })
-    : '';
-
-  const crowdWin = crowdImpliedSideWinPct(side, marketSnap);
+  const dlVal  = closeForLine ? daysLeftFromClose(closeForLine) : null;
+  const daysStr = dlVal != null ? `${esc(String(dlVal))} days left` : '';
   const st = marketSnap?.status ? esc(String(marketSnap.status).toUpperCase()) : null;
 
   let body =
-    `*Position snapshot*\n${DIV}\n${header}\n` +
-    `*Side:* ${esc(side)}\n` +
-    `Entry: *${escFmt(position.entryPrice * 100, 1)}¢* -> now: *${escFmt(curPrice * 100, 1)}¢*\n`;
-  if (timingLine) {
-    body += `${timingLine}\n`;
-  }
-  if (st) {
-    body += `Market status: *${st}*\n`;
-  }
-  if (marketSnap) {
-    body += `YES token: *${crowdYes}c* \\(implied P\\(YES\\)\\)\n`;
-    if (crowdWin) {
-      body += `Crowd P\\(your side wins\\): *${crowdWin}*\n`;
-    }
-  } else {
-    body += `_Live fetch failed \\- using last price\\._\n`;
-  }
-  body +=
-    `Unrealized PnL: *${esc(sign(unrealized) + usd(unrealized))}*\n` +
-    `Model at entry \\(P YES\\): *${escPct(position.myEstimatedProbability)}*\n`;
+    `*Your Bet*\n${DIV}\n${header}\n` +
+    `Side: *${esc(side)}*\n` +
+    `You put in: *${escUsd(position.totalCost)}*\n` +
+    `Currently worth: *${escUsd(currentWorth)}*\n` +
+    `Profit\\/Loss: *${pnlStr}*\n`;
+
+  if (daysStr) body += `Time left: ${daysStr}\n`;
+  if (st)      body += `Status: *${st}*\n`;
+  if (!marketSnap) body += `_\\(Live price unavailable — showing last known\\)_\n`;
 
   if (shouldOfferManualExit(unrealized) && marketSnap) {
-    body += `\n_Use Exit buttons below to close at live price\\._`;
+    body += `\n_Use the Exit buttons below to close your position\\._`;
   }
 
   if (freshEstimate) {
-    const pYes = freshEstimate.probability;
-    const pSide = side === 'YES' ? pYes : 1 - pYes;
+    const confidenceLabel =
+      freshEstimate.confidence === 'high' ? 'High ✅' :
+      freshEstimate.confidence === 'medium' ? 'Medium ⚡' : 'Low ⚠️';
     body +=
-      `${DIV}\n*Updated estimate*\n` +
-      `P\\(YES\\): *${escPct(pYes)}* \\| ${esc(String(freshEstimate.confidence).toUpperCase())}\n` +
-      `Your *${esc(side)}* win prob\\. \\~ *${escPct(pSide)}*\n` +
+      `\n${DIV}\n*Bot's latest view*\n` +
+      `Confidence: *${esc(confidenceLabel)}*\n` +
       `_${esc(freshEstimate.reasoning)}_`;
   }
 
@@ -418,38 +410,67 @@ function positionPriceTickMessage(position, currentPrice, unrealizedUsd) {
 
 // ─── Bet confirmed ────────────────────────────────────────────────────────────
 function betConfirmedMessage(position) {
-  const head = `_${positionCompactTitle(position)}_\n`;
-  const tv = eventTimingVolumeLine({
-    closeTime: position.closeTime,
-    volumeUsd: position.volumeUsdAtEntry,
-  });
-  const timing = tv ? `${tv}\n` : '';
-  return `*Bet placed \\(paper\\)*\n${DIV}\n${head}*${position.side}*\n${timing}Contracts: ${position.contracts} @ ${escFmt(position.entryPrice * 100, 1)}¢\nCost: ${escUsd(position.totalCost)}\nMax payout: ${escUsd(position.potentialPayout)}\nMax profit: \\+${escUsd(position.potentialProfit)}`;
+  const daysLeft = daysLeftFromClose(position.closeTime);
+  const daysStr  = daysLeft != null ? `\nEvent ends in: *${esc(String(daysLeft))} days*` : '';
+  return (
+    `*✅ Bet placed\\!*\n${DIV}\n` +
+    `_${positionCompactTitle(position)}_\n` +
+    `Side: *${esc(position.side)}*\n` +
+    `You bet: *${escUsd(position.totalCost)}*\n` +
+    `If you win: *\\+${escUsd(position.potentialProfit)}* \\(total ${escUsd(position.potentialPayout)}\\)\n` +
+    `Max loss: *${escUsd(position.totalCost)}*${daysStr}`
+  );
 }
 
 // ─── Exit opportunity (manual only; auto\\-close applies to stop\\-loss in monitor) ─
 function exitOpportunityMessage(position, currentPrice, profit) {
-  const diff = currentPrice - position.entryPrice;
-  return `*Take profit \\- exit signal*\n${DIV}\n${formatBetTargetHeader(position)}\n${position.side} @ ${escFmt(position.entryPrice * 100, 1)}¢ -> *${escFmt(currentPrice * 100, 1)}¢* \\(\\+${escFmt(diff * 100, 1)}¢\\)\n${DIV}\nExit now: *${esc(sign(profit) + usd(profit))}*\nIf held to resolution: \\+${escUsd(position.potentialProfit)}`;
+  const currentWorth = position.contracts * currentPrice;
+  return (
+    `*💰 Time to take profit\\!*\n${DIV}\n` +
+    `${formatBetTargetHeader(position)}\n` +
+    `You put in: *${escUsd(position.totalCost)}*\n` +
+    `Exit now for: *${escUsd(currentWorth)}*\n` +
+    `Profit: *\\+${escUsd(profit)}* ✅\n` +
+    `${DIV}\n_Use the Exit buttons to lock in your profit\\._`
+  );
 }
 
 // ─── Stop loss (legacy text if ever shown before auto\\-close) ───────────────
 function stopLossMessage(position, currentPrice, loss) {
-  const diff = position.entryPrice - currentPrice;
-  return `*Stop loss alert*\n${DIV}\n${formatBetTargetHeader(position)}\n${position.side} @ ${escFmt(position.entryPrice * 100, 1)}¢ -> *${escFmt(currentPrice * 100, 1)}¢* \\(-${escFmt(diff * 100, 1)}¢\\)\nCurrent loss: *\\-${escUsd(loss)}*`;
+  const currentWorth = position.contracts * currentPrice;
+  return (
+    `*⚠️ Your bet is losing*\n${DIV}\n` +
+    `${formatBetTargetHeader(position)}\n` +
+    `You put in: *${escUsd(position.totalCost)}*\n` +
+    `Currently worth: *${escUsd(currentWorth)}*\n` +
+    `Loss so far: *\\-${escUsd(loss)}* 🔴\n` +
+    `${DIV}\n_Consider exiting to limit your losses\\. Use the Exit buttons below\\._`
+  );
 }
 
 /** After automatic stop\\-loss exit \\(\\+ Telegram confirmation\\) */
 function stopLossAutoClosedMessage(closed) {
   const pnl = closed.pnl || 0;
-  return `*Stop loss — exited automatically*\n${DIV}\n${positionCompactTitle(closed)}\n` +
-    `${esc(closed.side)} \\| PnL: *${esc(sign(pnl) + usd(pnl))}*\n_You were only notified; position is already closed\\._`;
+  const pnlStr = pnl >= 0 ? `\\+${escUsd(pnl)}` : `\\-${escUsd(Math.abs(pnl))}`;
+  return (
+    `*🛑 Bet auto\\-closed \\(stop loss\\)*\n${DIV}\n` +
+    `${positionCompactTitle(closed)}\n` +
+    `Side: *${esc(closed.side)}*\n` +
+    `Result: *${pnlStr}*\n` +
+    `_Your position has already been closed to protect you from further losses\\._`
+  );
 }
 
 // ─── Resolved ─────────────────────────────────────────────────────────────────
 function resolvedMessage(position, won) {
   const pnl = position.pnl || 0;
-  return `*Resolution*\n${DIV}\n${positionCompactTitle(position)}\nSide: *${position.side}* \\| Result: *${won ? 'WON' : 'LOST'}*\nPnL: ${esc(sign(pnl) + '$' + Math.abs(pnl).toFixed(2))}`;
+  const pnlStr = pnl >= 0 ? `\\+${escUsd(pnl)}` : `\\-${escUsd(Math.abs(pnl))}`;
+  return (
+    `*${won ? '🎉 You won\\!' : '😔 Bet lost'}*\n${DIV}\n` +
+    `${positionCompactTitle(position)}\n` +
+    `Side: *${esc(position.side)}*\n` +
+    `${won ? `Profit: *${pnlStr}* ✅` : `Loss: *${pnlStr}* 🔴`}`
+  );
 }
 
 /** Paper exit before resolution \\(manual / take\\-profit callback\\). */

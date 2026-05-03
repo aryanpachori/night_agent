@@ -9,6 +9,7 @@ const { PublicKey } = require('@solana/web3.js');
 const { requireDb } = require('../middleware/prisma');
 const { requireAuth, getJwtSecret } = require('../middleware/auth');
 const { invalidateCache } = require('../../bot/userManager');
+const { sendWelcomeMessage } = require('../../telegram/alerts');
 
 const router = express.Router();
 
@@ -60,6 +61,10 @@ router.post('/telegram', requireDb, async (req, res) => {
 
     const telegramId = BigInt(userData.id);
 
+    // Check if this is a genuinely new signup (first-ever Telegram login)
+    const existing = await prisma.user.findUnique({ where: { telegramId }, select: { id: true } });
+    const isNewUser = !existing;
+
     const user = await prisma.user.upsert({
       where: { telegramId },
       update: {
@@ -88,6 +93,15 @@ router.post('/telegram', requireDb, async (req, res) => {
     const token = await createToken(secret, { userId: user.id, telegramId: String(userData.id) });
 
     invalidateCache();
+
+    // Send a welcome DM to new users who just linked their Telegram
+    if (isNewUser) {
+      setImmediate(() => {
+        sendWelcomeMessage(telegramId, userData.first_name).catch(err =>
+          console.warn('[auth/telegram] Welcome message failed:', err.message),
+        );
+      });
+    }
 
     res.setHeader('Set-Cookie', `nightagent_token=${token}; ${cookieAttrs()}`);
     res.json({
@@ -176,6 +190,8 @@ router.get('/me', requireDb, requireAuth, async (req, res) => {
         alertIntervalMin: true,
         telegramAlerts: true,
         isPaused: true,
+        autoTakeProfitPct: true,
+        autoStopLossPct: true,
         createdAt: true,
         wallet: {
           select: {

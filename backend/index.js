@@ -3,12 +3,15 @@
 require('dotenv').config();
 
 // ─── Validate required env vars ───────────────────────────────────────────────
-const REQUIRED = ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID', 'JUPITER_API_KEY', 'GEMINI_API_KEY'];
+const REQUIRED = ['TELEGRAM_BOT_TOKEN', 'JUPITER_API_KEY', 'GEMINI_API_KEY'];
 const missing  = REQUIRED.filter(k => !process.env[k]);
 if (missing.length > 0) {
   console.error(`[startup] Missing required env vars: ${missing.join(', ')}`);
   console.error('[startup] Copy .env.example to .env and fill in your keys.');
   process.exit(1);
+}
+if (!process.env.TELEGRAM_CHAT_ID) {
+  console.log('[startup] TELEGRAM_CHAT_ID not set — system-level Telegram messages disabled. Users receive alerts via their own registered Telegram IDs.');
 }
 
 // ─── Imports ──────────────────────────────────────────────────────────────────
@@ -31,7 +34,6 @@ const { getPrisma } = require('./src/db/client');
 const {
   hasActiveUsers,
   getActiveUsers,
-  seedOwnerIfNeeded,
   getUsersForOpportunityAlert,
 } = require('./src/bot/userManager');
 
@@ -217,8 +219,6 @@ async function main() {
   createBot();
 
   apiHttpServer = await startApiServer();
-
-  await seedOwnerIfNeeded();
 
   if (getPrisma()) {
     const n = (await getActiveUsers()).length;

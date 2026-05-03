@@ -1,49 +1,78 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
+import Link from 'next/link'
+import toast from 'react-hot-toast'
 import { Topbar } from '@/components/layout/topbar'
 import { Card } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
 import { Toggle } from '@/components/ui/toggle'
 import { Tabs } from '@/components/ui/tabs'
-import { formatPct, formatTimeAgo } from '@/lib/utils'
+import { formatUSD, formatTimeAgo } from '@/lib/utils'
 import { Tooltip } from '@/components/ui/tooltip'
 import { staggerContainer, tableRow } from '@/lib/animations'
 import { useAuth, useUpdateSettings } from '@/hooks/useAuth'
-import { useAlerts } from '@/hooks/useAlerts'
+import { useAlerts, useAlertStream, useRecordAlertAction } from '@/hooks/useAlerts'
+import { usePlaceBet } from '@/hooks/usePositions'
+import { useQueryClient } from '@tanstack/react-query'
 
-const confidenceVariant: Record<string, 'success' | 'warning' | 'muted'> = {
-  high: 'success',
-  medium: 'warning',
-  low: 'muted',
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+/** Build a plain-English event name from the raw market question + side. */
+function buildEventName(question: string, side: string): string {
+  if (!question) return 'Market event'
+  const q = question.toLowerCase()
+  const dir = side === 'YES' ? '↑ UP' : '↓ DOWN'
+
+  if (q.includes('bitcoin') || q.includes('btc')) return `Bitcoin ${dir}`
+  if (q.includes('ethereum') || q.includes('eth')) return `Ethereum ${dir}`
+  if (q.includes('solana') || q.includes('sol')) return `Solana ${dir}`
+  if (q.includes('bnb')) return `BNB ${dir}`
+  if (q.includes('xrp')) return `XRP ${dir}`
+  if (q.includes('doge') || q.includes('dogecoin')) return `Dogecoin ${dir}`
+  if (q.includes('hyper') || q.includes('hype')) return `Hyperliquid ${dir}`
+  if (q.includes('pepe')) return `PEPE ${dir}`
+  if (q.includes('trump')) return `Trump market ${dir}`
+
+  // Generic — strip Jupiter boilerplate
+  const cleaned = question
+    .replace(/this market will resolve.*?if\s+/gi, '')
+    .replace(/the .* price at.*$/gi, '')
+    .replace(/otherwise.*$/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return (cleaned.slice(0, 55) || question.slice(0, 55)) + (cleaned.length > 55 ? '…' : '')
 }
 
-function categoryBadgeVariant(cat: string): 'accent' | 'warning' | 'success' | 'muted' {
-  if (cat === 'crypto') return 'accent'
-  if (cat === 'politics') return 'warning'
-  if (cat === 'economics') return 'success'
-  return 'muted'
+const CONFIDENCE_LABELS: Record<string, { label: string; color: string }> = {
+  high:   { label: '✅ Strong signal',   color: 'text-[var(--success)]' },
+  medium: { label: '⚡ Moderate signal', color: 'text-[var(--warning)]' },
+  low:    { label: '⚠️ Weak signal',     color: 'text-[var(--text-muted)]' },
 }
 
-function alertTypeLabel(alert: { actionTaken?: string | null; side?: string }) {
-  const a = alert.actionTaken ?? ''
-  if (a.startsWith('bet')) return `BET ${alert.side ?? ''}`
-  return 'SKIPPED'
+const DIRECTION_LABELS: Record<string, { label: string; color: string }> = {
+  YES: { label: '↑ Going UP',   color: 'text-[var(--success)]' },
+  NO:  { label: '↓ Going DOWN', color: 'text-[var(--danger)]' },
 }
 
 export default function AlertsPage() {
   const { user, refetchUser } = useAuth()
+  const qc = useQueryClient()
   const updateSettings = useUpdateSettings()
+  const recordAction = useRecordAlertAction()
+  const placeBet = usePlaceBet()
+
   const [maxAlerts, setMaxAlerts] = useState(10)
   const [minTime, setMinTime] = useState('5min')
   const [telegramOn, setTelegramOn] = useState(true)
   const [webNotif, setWebNotif] = useState(false)
   const [filterTab, setFilterTab] = useState('all')
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default')
+  const [actingOn, setActingOn] = useState<string | null>(null)
 
   const { data: alertsPayload } = useAlerts('all', 50)
   const prevAlertCountRef = useRef<number | null>(null)
+  useAlertStream(true)
 
   useEffect(() => {
     if (!user) return
@@ -55,47 +84,88 @@ export default function AlertsPage() {
 
   useEffect(() => {
     if (typeof window === 'undefined' || typeof Notification === 'undefined') return
-    setNotificationPermission(Notification.permission)
+    const perm = Notification.permission
+    setNotificationPermission(perm)
+    if (perm === 'granted') setWebNotif(true)
   }, [])
 
-  // Fire a browser push notification when the alert list grows
   useEffect(() => {
-    const currentAlerts = alertsPayload?.alerts ?? []
-    const count = currentAlerts.length
-    if (prevAlertCountRef.current !== null && count > prevAlertCountRef.current) {
-      const newest = currentAlerts[0] as Record<string, unknown> | undefined
-      if (
-        typeof Notification !== 'undefined' &&
-        Notification.permission === 'granted' &&
-        newest
-      ) {
-        const action = String(newest.actionTaken ?? '')
-        const isBet = action.startsWith('bet')
-        const edge = Number(newest.edge ?? 0)
-        new Notification(isBet ? '📈 NightAgent Bet Alert' : '📋 NightAgent Alert', {
-          body: `${String(newest.marketQuestion ?? '').slice(0, 80)} — Edge ${(edge * 100).toFixed(0)}% (${String(newest.confidence ?? 'medium')})`,
-          icon: '/logo.png',
-        })
-      }
-    }
+    const count = (alertsPayload?.alerts ?? []).length
     prevAlertCountRef.current = count
   }, [alertsPayload])
 
   const handleWebNotif = async (next: boolean) => {
     if (typeof window === 'undefined') return
-    if (!next) {
-      setWebNotif(false)
-      return
-    }
+    if (!next) { setWebNotif(false); return }
     if (typeof Notification === 'undefined') return
-
     let permission = Notification.permission
-    if (permission === 'default') {
-      permission = await Notification.requestPermission()
-    }
-
+    if (permission === 'default') permission = await Notification.requestPermission()
     setNotificationPermission(permission)
     setWebNotif(permission === 'granted')
+  }
+
+  const persistPrefs = async (partial: Record<string, unknown>) => {
+    try {
+      await updateSettings.mutateAsync(partial)
+      await refetchUser()
+      toast.success('Saved')
+    } catch {
+      toast.error('Failed to save')
+    }
+  }
+
+  /** Inline SKIP — record actionTaken without navigating away */
+  const handleSkip = async (alertId: string) => {
+    setActingOn(alertId)
+    try {
+      await recordAction.mutateAsync({ id: alertId, actionTaken: 'skipped' })
+      qc.invalidateQueries({ queryKey: ['alerts'] })
+      toast.success('Skipped')
+    } catch {
+      toast.error('Failed to skip')
+    } finally {
+      setActingOn(null)
+    }
+  }
+
+  /** Inline BET from the alert row (no navigation needed if user just wants to act) */
+  const handleBet = async (alert: Record<string, unknown>) => {
+    const alertId = String(alert.id ?? '')
+    const marketId = String(alert.marketId ?? '')
+    const side = String(alert.side ?? 'YES')
+    const stake = Number(alert.suggestedAmount ?? 50)
+    const marketQuestion = String(alert.marketQuestion ?? '')
+    const category = String(alert.category ?? '')
+    const marketPrice = Number(alert.marketPrice ?? 0.5)
+
+    if (!marketId || stake < 1) return
+    setActingOn(alertId)
+    try {
+      const result = await placeBet.mutateAsync({
+        marketId,
+        marketQuestion,
+        category,
+        side,
+        entryPrice: marketPrice,
+        amount: stake,
+      }) as { position?: { id?: string } }
+
+      await recordAction.mutateAsync({
+        id: alertId,
+        actionTaken: 'bet_full',
+        positionId: result?.position?.id,
+      })
+
+      qc.invalidateQueries({ queryKey: ['alerts'] })
+      qc.invalidateQueries({ queryKey: ['positions'] })
+      qc.invalidateQueries({ queryKey: ['wallet'] })
+      toast.success(`Bet placed — $${stake.toFixed(0)} on ${side}`)
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Failed to place bet'
+      toast.error(msg)
+    } finally {
+      setActingOn(null)
+    }
   }
 
   const alerts = (alertsPayload?.alerts ?? []) as Array<Record<string, unknown>>
@@ -103,28 +173,30 @@ export default function AlertsPage() {
   const filtered = useMemo(() => {
     return alerts.filter((a) => {
       const action = String(a.actionTaken ?? '')
-      if (filterTab === 'bet') return action.startsWith('bet')
-      if (filterTab === 'skipped') return action === 'skipped'
+      if (filterTab === 'acted') return action === 'bet_full' || action === 'bet_half'
+      if (filterTab === 'passed') return action === 'skipped' || action === 'expired'
       return true
     })
   }, [alerts, filterTab])
 
-  const persistPrefs = async (partial: Record<string, unknown>) => {
-    await updateSettings.mutateAsync(partial)
-    await refetchUser()
-  }
-
   const tabCounts = useMemo(() => {
-    const bets = alerts.filter((a) => String(a.actionTaken ?? '').startsWith('bet')).length
-    const skipped = alerts.filter((a) => String(a.actionTaken ?? '') === 'skipped').length
-    return { all: alerts.length, bet: bets, skipped }
+    const acted = alerts.filter((a) => {
+      const x = String(a.actionTaken ?? '')
+      return x === 'bet_full' || x === 'bet_half'
+    }).length
+    const passed = alerts.filter((a) => {
+      const x = String(a.actionTaken ?? '')
+      return x === 'skipped' || x === 'expired'
+    }).length
+    return { all: alerts.length, acted, passed }
   }, [alerts])
 
   return (
     <div className="flex flex-1 flex-col">
-      <Topbar title="Alerts" subtitle="Alert history and notification settings" />
+      <Topbar title="Alerts" subtitle="Bot signals and notification settings" />
 
       <div className="space-y-5 p-4 pb-6 sm:p-6">
+        {/* ── Settings card ─────────────────────────────────────────────── */}
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
           <Card className="p-4 sm:p-5">
             <h3 className="mb-5 text-sm font-semibold text-[var(--text-primary)]">Alert Settings</h3>
@@ -156,25 +228,29 @@ export default function AlertsPage() {
               </div>
 
               <div>
-                <p className="mb-2 text-xs uppercase tracking-wider text-[var(--text-muted)]">Min Time Between Alerts</p>
+                <p className="mb-2 text-xs uppercase tracking-wider text-[var(--text-muted)]">How often?</p>
                 <div className="flex flex-wrap gap-1.5">
-                  {['5min', '15min', '30min', '1hr'].map((v) => (
+                  {[
+                    { label: 'Fast', value: '5min', mins: 5 },
+                    { label: 'Normal', value: '15min', mins: 15 },
+                    { label: 'Slow', value: '30min', mins: 30 },
+                    { label: 'Rare', value: '1hr', mins: 60 },
+                  ].map(({ label, value, mins }) => (
                     <button
-                      key={v}
+                      key={value}
                       type="button"
                       disabled={updateSettings.isPending}
                       onClick={() => {
-                        setMinTime(v)
-                        const mins = v === '5min' ? 5 : v === '15min' ? 15 : v === '30min' ? 30 : 60
+                        setMinTime(value)
                         void persistPrefs({ alertIntervalMin: mins })
                       }}
-                      className={`rounded-lg border px-3 py-1.5 font-mono text-xs transition-all ${
-                        minTime === v
+                      className={`rounded-lg border px-3 py-1.5 text-xs transition-all ${
+                        minTime === value
                           ? 'border-[var(--accent)]/40 bg-[var(--accent-glow)] text-[var(--accent-bright)]'
                           : 'border-[var(--border)] bg-[var(--bg-secondary)] text-[var(--text-secondary)] hover:border-[var(--border-bright)]'
                       }`}
                     >
-                      {v}
+                      {label}
                     </button>
                   ))}
                 </div>
@@ -219,6 +295,7 @@ export default function AlertsPage() {
           </Card>
         </motion.div>
 
+        {/* ── Signal history ─────────────────────────────────────────────── */}
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
@@ -226,13 +303,13 @@ export default function AlertsPage() {
         >
           <Card className="overflow-hidden">
             <div className="flex flex-col gap-3 border-b border-[var(--border)] p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
-              <h3 className="text-sm font-semibold text-[var(--text-primary)]">Alert History</h3>
+              <h3 className="text-sm font-semibold text-[var(--text-primary)]">Signal History</h3>
               <Tabs
                 className="w-full max-w-full sm:w-auto"
                 tabs={[
-                  { id: 'all', label: 'All', count: tabCounts.all },
-                  { id: 'bet', label: 'Bet', count: tabCounts.bet },
-                  { id: 'skipped', label: 'Skipped', count: tabCounts.skipped },
+                  { id: 'all',    label: 'All',     count: tabCounts.all },
+                  { id: 'acted',  label: 'I Bet',   count: tabCounts.acted },
+                  { id: 'passed', label: 'Skipped', count: tabCounts.passed },
                 ]}
                 active={filterTab}
                 onChange={setFilterTab}
@@ -240,10 +317,10 @@ export default function AlertsPage() {
             </div>
 
             <div className="overflow-x-auto overscroll-x-contain">
-              <table className="min-w-[720px] w-full">
+              <table className="min-w-[680px] w-full">
                 <thead>
                   <tr className="border-b border-[var(--border)]">
-                    {['Time', 'Market', 'Category', 'Type', 'Confidence', 'Edge', 'Reason'].map((h) => (
+                    {['Time', 'Event', 'Direction', 'Stake → Win', 'Signal', 'Reason', ''].map((h) => (
                       <th
                         key={h}
                         className="whitespace-nowrap px-4 py-3 text-left text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]"
@@ -256,54 +333,121 @@ export default function AlertsPage() {
                 <motion.tbody variants={staggerContainer} initial="hidden" animate="visible" key={filterTab}>
                   {filtered.map((alert) => {
                     const confidence = String(alert.confidence ?? 'medium')
-                    const category = String(alert.category ?? '')
                     const reasoning = String(alert.reasoning ?? '')
-                    const edge = Number(alert.edge ?? 0)
+                    const side = String(alert.side ?? 'YES')
+                    const marketId = String(alert.marketId ?? '')
+                    const alertId = String(alert.id ?? '')
                     const createdAt = alert.createdAt ? new Date(String(alert.createdAt)) : new Date()
+                    const stake = Math.round(Number(alert.suggestedAmount ?? 50))
+                    const winAmount = Math.round(Number(alert.suggestedContracts ?? 0))
+                    const action = String(alert.actionTaken ?? '')
+                    const hasActed = action !== ''
+                    const isBetting = actingOn === alertId
+
+                    const eventName = buildEventName(String(alert.marketQuestion ?? ''), side)
+                    const conf = CONFIDENCE_LABELS[confidence] ?? CONFIDENCE_LABELS.low
+                    const dir = DIRECTION_LABELS[side] ?? DIRECTION_LABELS.YES
+
                     return (
                       <motion.tr
-                        key={String(alert.id)}
+                        key={alertId}
                         variants={tableRow}
                         className="border-b border-[var(--border)] transition-colors hover:bg-[var(--bg-card-hover)]"
                       >
+                        {/* Time */}
                         <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-[var(--text-muted)]">
                           {formatTimeAgo(createdAt)}
                         </td>
+
+                        {/* Event name — no category badge */}
                         <td className="px-4 py-3">
-                          <p className="max-w-[180px] truncate text-xs text-[var(--text-primary)]">
-                            {String(alert.marketQuestion ?? '')}
+                          <p className="max-w-[200px] truncate text-xs font-medium text-[var(--text-primary)]">
+                            {eventName}
                           </p>
-                          <p className="mt-0.5 max-w-[180px] truncate text-[10px] text-[var(--text-muted)]">
-                            {reasoning}
-                          </p>
                         </td>
+
+                        {/* Direction — plain English, no YES/NO jargon */}
+                        <td className="whitespace-nowrap px-4 py-3">
+                          <span className={`text-xs font-semibold ${dir.color}`}>{dir.label}</span>
+                        </td>
+
+                        {/* Stake → Win */}
                         <td className="px-4 py-3">
-                          <Badge variant={categoryBadgeVariant(category)} size="sm" className="capitalize">
-                            {category}
-                          </Badge>
+                          {winAmount > 0 ? (
+                            <span className="font-mono text-xs text-[var(--text-primary)]">
+                              {formatUSD(stake)}
+                              <span className="mx-1 text-[var(--text-muted)]">→</span>
+                              <span className="font-semibold text-[var(--success)]">{formatUSD(winAmount)}</span>
+                            </span>
+                          ) : (
+                            <span className="font-mono text-xs text-[var(--text-primary)]">{formatUSD(stake)}</span>
+                          )}
                         </td>
-                        <td className="px-4 py-3 font-mono text-xs font-semibold text-[var(--text-secondary)]">
-                          {alertTypeLabel({
-                            actionTaken: alert.actionTaken != null ? String(alert.actionTaken) : undefined,
-                            side: alert.side != null ? String(alert.side) : undefined,
-                          })}
+
+                        {/* Signal strength */}
+                        <td className="whitespace-nowrap px-4 py-3">
+                          <span className={`text-xs font-medium ${conf.color}`}>{conf.label}</span>
                         </td>
-                        <td className="px-4 py-3">
-                          <Badge variant={confidenceVariant[confidence] || 'muted'} size="sm" className="capitalize">
-                            {confidence}
-                          </Badge>
-                        </td>
-                        <td className="px-4 py-3 font-mono text-xs font-semibold text-[var(--accent-bright)]">
-                          {formatPct(edge * 100, 0)}
-                        </td>
-                        <td className="max-w-[220px] px-4 py-3">
+
+                        {/* Reason */}
+                        <td className="max-w-[200px] px-4 py-3">
                           <Tooltip content={reasoning}>
                             <span className="block truncate text-xs text-[var(--text-muted)]">{reasoning}</span>
                           </Tooltip>
                         </td>
+
+                        {/* Action column — conditional on actionTaken */}
+                        <td className="px-4 py-3">
+                          {hasActed ? (
+                            // Show what was done — read only
+                            <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${
+                              action === 'bet_full' || action === 'bet_half'
+                                ? 'border-[var(--success)]/30 bg-[var(--success-dim)] text-[var(--success)]'
+                                : action === 'skipped'
+                                  ? 'border-[var(--border)] bg-[var(--bg-secondary)] text-[var(--text-muted)]'
+                                  : 'border-[var(--border)] bg-[var(--bg-secondary)] text-[var(--text-muted)]'
+                            }`}>
+                              {action === 'bet_full' || action === 'bet_half'
+                                ? `✅ Bet $${stake}`
+                                : action === 'skipped'
+                                  ? '⏭ Skipped'
+                                  : '⏰ Expired'}
+                            </span>
+                          ) : marketId ? (
+                            // Not acted yet — show Bet + Skip
+                            <div className="flex items-center gap-1.5">
+                              {/* "Bet →" goes to market detail page for full confirmation */}
+                              <Link
+                                href={`/dashboard/markets/${marketId}?side=${side}&amount=${stake}&alertId=${alertId}`}
+                                className="inline-flex items-center gap-1 rounded-lg border border-[var(--accent)]/40 bg-[var(--accent-glow)] px-2.5 py-1 font-mono text-[10px] font-semibold text-[var(--accent-bright)] transition-all hover:border-[var(--accent)]/70 hover:bg-[var(--accent)]/15"
+                              >
+                                Bet →
+                              </Link>
+                              <button
+                                type="button"
+                                disabled={isBetting}
+                                onClick={() => void handleSkip(alertId)}
+                                className="rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-1 text-[10px] text-[var(--text-muted)] transition-all hover:border-[var(--border-bright)] hover:text-[var(--text-secondary)] disabled:opacity-50"
+                              >
+                                {isBetting ? '…' : 'Skip'}
+                              </button>
+                            </div>
+                          ) : null}
+                        </td>
                       </motion.tr>
                     )
                   })}
+                  {filtered.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="px-4 py-10 text-center text-xs text-[var(--text-muted)]">
+                        {filterTab === 'all'
+                          ? 'No alerts yet — the bot scans every 2 min.'
+                          : filterTab === 'acted'
+                            ? 'No bets placed yet.'
+                            : 'No skipped signals.'}
+                      </td>
+                    </tr>
+                  )}
                 </motion.tbody>
               </table>
             </div>

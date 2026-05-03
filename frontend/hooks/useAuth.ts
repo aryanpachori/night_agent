@@ -1,4 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import toast from 'react-hot-toast'
 import { useAuthContext } from '@/providers/AuthProvider'
 import { api } from '@/lib/api'
 
@@ -14,6 +15,9 @@ export function useUpdateSettings() {
     onSuccess: async () => {
       await refetchUser()
       qc.invalidateQueries({ queryKey: ['stats'] })
+    },
+    onError: () => {
+      toast.error('Failed to save settings')
     },
   })
 }

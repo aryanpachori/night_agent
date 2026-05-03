@@ -135,11 +135,37 @@ function createBot() {
   if (!token) throw new Error('TELEGRAM_BOT_TOKEN not set');
 
   const bot    = new TelegramBot(token, { polling: true });
-  const chatId = process.env.TELEGRAM_CHAT_ID;
+  // System owner chat — used only for admin commands (/scan, /positions, etc.)
+  // Optional: if not set, admin commands are disabled from Telegram.
+  const ownerChatId = process.env.TELEGRAM_CHAT_ID || null;
 
   alerts.setBot(bot);
 
-  function guard(msg) { return String(msg.chat.id) === chatId; }
+  /** Returns true if the message is from the system owner (admin commands). */
+  function isOwner(msg) {
+    return ownerChatId != null && String(msg.chat.id) === String(ownerChatId);
+  }
+
+  /** Returns the registered DB user for a Telegram sender, or null if not registered. */
+  async function getDbUser(msg) {
+    const prisma = getPrisma();
+    if (!prisma || msg.from?.id == null) return null;
+    try {
+      return await prisma.user.findUnique({
+        where: { telegramId: BigInt(msg.from.id) },
+        select: { id: true, firstName: true, telegramAlerts: true, isPaused: true },
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  /** Admin-only guard — blocks non-owners for system commands. */
+  function guard(msg) {
+    if (!ownerChatId) return false;
+    return String(msg.chat.id) === String(ownerChatId);
+  }
+
   function reply(id, text, extra = {}) {
     return bot.sendMessage(id, text, { parse_mode: 'MarkdownV2', ...extra });
   }
@@ -241,10 +267,37 @@ function createBot() {
     }
   }
 
-  // ── /start ─────────────────────────────────────────────────────────────────
-  bot.onText(/\/start/, msg => {
-    if (!guard(msg)) return;
-    reply(msg.chat.id, msgs.startupMessage(wallet.getBalance()));
+  // ── /start — open to all; registered users get welcome, others get signup link ────
+  bot.onText(/\/start/, async msg => {
+    const { esc } = msgs;
+    const siteUrl = esc(process.env.FRONTEND_URL || 'http://localhost:3000');
+
+    // Owner admin shortcut
+    if (isOwner(msg)) {
+      reply(msg.chat.id, msgs.startupMessage(wallet.getBalance()));
+      return;
+    }
+
+    // Check if this Telegram user is registered via the website
+    const dbUser = await getDbUser(msg);
+    if (dbUser) {
+      const name = dbUser.firstName ? esc(dbUser.firstName) : 'there';
+      reply(
+        msg.chat.id,
+        `👋 Hey ${name}\\! You're connected to *Night Agent*\\.\n\n` +
+        `I'll send you bet signals here whenever the bot spots a good opportunity\\.\n\n` +
+        `🌐 Dashboard: ${siteUrl}\n\n` +
+        `_Make sure Telegram Alerts are enabled in your dashboard settings\\._`,
+      );
+    } else {
+      reply(
+        msg.chat.id,
+        `👋 Hi\\! I'm *Night Agent* — a prediction market bet signal bot\\.\n\n` +
+        `To receive alerts, you need to sign up on the website and connect your Telegram:\n\n` +
+        `🔗 ${siteUrl}/login\n\n` +
+        `_Once registered, you'll get bet signals directly in this chat\\._`,
+      );
+    }
   });
 
   // ── /help ──────────────────────────────────────────────────────────────────
@@ -384,7 +437,20 @@ function createBot() {
 
   // ── Natural language ────────────────────────────────────────────────────────
   bot.on('message', async msg => {
-    if (!guard(msg) || !msg.text || msg.text.startsWith('/')) return;
+    if (!msg.text || msg.text.startsWith('/')) return;
+    if (!guard(msg)) {
+      // For registered web users, acknowledge but explain commands are admin-only
+      const dbUser = await getDbUser(msg);
+      if (dbUser) {
+        const { esc } = msgs;
+        const siteUrl = esc(process.env.FRONTEND_URL || 'http://localhost:3000');
+        reply(
+          msg.chat.id,
+          `I only send you alerts here 📲\n\nTo manage your bets and settings, visit your dashboard:\n🌐 ${siteUrl}`,
+        );
+      }
+      return;
+    }
     const text = msg.text.toLowerCase().trim();
     const { esc } = msgs;
 

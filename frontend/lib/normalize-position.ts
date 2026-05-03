@@ -12,7 +12,8 @@ export type UiOpenPosition = {
   currentValue: number
   pnl: number
   pnlPercent: number
-  daysLeft: number
+  /** null = no close time set; 0 = closes today; >0 = days remaining */
+  daysLeft: number | null
   status: string
 }
 
@@ -62,7 +63,7 @@ export function normalizeOpenPosition(row: Record<string, unknown>): UiOpenPosit
     currentValue,
     pnl,
     pnlPercent,
-    daysLeft: Number(row.daysLeft ?? 0),
+    daysLeft: row.daysLeft != null ? Number(row.daysLeft) : null,
     status: String(row.status ?? 'open'),
   }
 }

@@ -42,7 +42,9 @@ function getBrierMultiplier(brierScore) {
   if (brierScore <= 0.10) return 1.00;
   if (brierScore <= 0.15) return 0.75;
   if (brierScore <= 0.20) return 0.50;
-  return 0;                               // model is broken, don't bet
+  // Previously returned 0 here — that zeroed Kelly for *every* opportunity and blocked all alerts.
+  // Still penalize poor calibration, but keep a non-zero floor so the scanner can surface signals.
+  return 0.25;
 }
 
 /**

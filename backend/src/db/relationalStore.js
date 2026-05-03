@@ -92,6 +92,23 @@ function walletDerivedStats(w) {
   return { wins, losses, totalPnl, totalBets };
 }
 
+/** If the same position id appears in open + closed (sync bug), keep the row with higher status rank. */
+function dedupePositionRows(rows) {
+  const rank = { open: 3, closed: 2, resolved: 1 };
+  const byId = new Map();
+  for (const row of rows) {
+    const prev = byId.get(row.id);
+    if (!prev) {
+      byId.set(row.id, row);
+      continue;
+    }
+    const rNew = rank[row.status] ?? 0;
+    const rOld = rank[prev.status] ?? 0;
+    if (rNew > rOld) byId.set(row.id, row);
+  }
+  return [...byId.values()];
+}
+
 function rowFromPayload(userId, status, payload) {
   const p = typeof payload === 'object' && payload !== null ? payload : {};
   const openedAt = p.openedAt != null ? new Date(p.openedAt) : null;
@@ -170,7 +187,7 @@ async function saveRelational(prisma) {
       const closed = (w.closedPositions || []).map(p =>
         rowFromPayload(userId, p.status === 'resolved' ? 'resolved' : 'closed', p),
       );
-      const posRows = [...open, ...closed];
+      const posRows = dedupePositionRows([...open, ...closed]);
       if (posRows.length) await tx.paperPosition.createMany({ data: posRows });
 
       await tx.marketAlertDedup.deleteMany({ where: { userId } });

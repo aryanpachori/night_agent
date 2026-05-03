@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('crypto');
 const express = require('express');
 const { requireDb } = require('../middleware/prisma');
 const { requireAuth } = require('../middleware/auth');
@@ -89,7 +90,8 @@ router.post('/', requireDb, requireAuth, async (req, res) => {
     const contracts = Math.floor(amt / ep);
     const actualCost = contracts * ep;
     const now = new Date();
-    const positionId = `pos_dash_${Date.now()}`;
+    // id is globally unique across all users (PaperPosition @id) — never use only Date.now()
+    const positionId = `pos_${crypto.randomUUID().replace(/-/g, '')}`;
 
     const payload = {
       id: positionId,

@@ -188,7 +188,9 @@ async function saveRelational(prisma) {
         rowFromPayload(userId, p.status === 'resolved' ? 'resolved' : 'closed', p),
       );
       const posRows = dedupePositionRows([...open, ...closed]);
-      if (posRows.length) await tx.paperPosition.createMany({ data: posRows });
+      if (posRows.length) {
+        await tx.paperPosition.createMany({ data: posRows, skipDuplicates: true });
+      }
 
       await tx.marketAlertDedup.deleteMany({ where: { userId } });
       const ma = w.alertedMarkets || {};

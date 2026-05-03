@@ -8,7 +8,6 @@ import { PnlChart } from '@/components/dashboard/pnl-chart'
 import { BotStatusPanel } from '@/components/dashboard/bot-status-panel'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Tooltip } from '@/components/ui/tooltip'
 import DashboardSkeleton from '@/app/dashboard/loading'
 
 import { useSummaryStats, useBotStatus } from '@/hooks/useStats'
@@ -36,7 +35,6 @@ export default function DashboardPage() {
   const { data: positionsData } = usePositions('open')
   const { data: alertsData } = useAlerts('all', 5)
   const { data: botStatus } = useBotStatus()
-  // Real-time alert delivery via SSE
   useAlertStream(true)
   const pauseBot = usePauseBot()
 

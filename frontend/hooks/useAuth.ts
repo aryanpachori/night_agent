@@ -14,7 +14,7 @@ export function useUpdateSettings() {
     mutationFn: (data: Record<string, unknown>) => api.patch('/api/user', data).then((r) => r.data),
     onSuccess: async () => {
       await refetchUser()
-      qc.invalidateQueries({ queryKey: ['stats'] })
+      await qc.invalidateQueries({ queryKey: ["stats"] })
     },
     onError: () => {
       toast.error('Failed to save settings')
@@ -29,7 +29,7 @@ export function usePauseBot() {
     mutationFn: (paused?: boolean) => api.post('/api/user/pause', { paused }).then((r) => r.data),
     onSuccess: async () => {
       await refetchUser()
-      qc.invalidateQueries({ queryKey: ['stats'] })
+      await qc.invalidateQueries({ queryKey: ["stats"] })
     },
   })
 }

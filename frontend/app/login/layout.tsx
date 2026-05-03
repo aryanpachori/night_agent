@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import { SolanaWalletProvider } from '@/components/wallet/solana-wallet-provider'
 
 export const metadata: Metadata = {
   title: 'Login',
@@ -7,5 +8,5 @@ export const metadata: Metadata = {
 }
 
 export default function LoginLayout({ children }: { children: React.ReactNode }) {
-  return children
+  return <SolanaWalletProvider>{children}</SolanaWalletProvider>
 }

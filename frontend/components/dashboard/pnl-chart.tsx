@@ -1,4 +1,4 @@
-﻿'use client'
+'use client'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { mockPnlHistory } from '@/data/mock'
 import { formatUSD } from '@/lib/utils'

@@ -25,6 +25,8 @@ const {
   canSendOpportunityAlert,
   recordOpportunityAlert,
 }                  = require('./src/telegram/opportunityRateLimit');
+const { recordLastScanAt } = require('./src/db/lastScan');
+const { startApiServer } = require('./src/api/server');
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const SCAN_INTERVAL         = parseInt(process.env.SCAN_INTERVAL_MINUTES)         || 5;
@@ -38,6 +40,9 @@ const MAX_FOCUS_EVENTS = parseInt(process.env.MAX_FOCUS_EVENTS, 10)       || 2;
 /** Per scan: default 1 so a single run cannot spam multiple BET alerts when focus allows more than 1\\. */
 const MAX_OPPORTUNITIES_PER_SCAN = parseInt(process.env.MAX_OPPORTUNITIES_PER_SCAN, 10) || 1;
 const MORE_OPPORTUNITIES_COUNT   = parseInt(process.env.MORE_OPPORTUNITIES_COUNT, 10)   || 2;
+
+/** Set when REST API starts (`JWT_SECRET` ≥ 16 chars). */
+let apiHttpServer = null;
 
 // ─── 60-second price poller ───────────────────────────────────────────────────
 async function pollPrices() {
@@ -96,41 +101,45 @@ async function runOpportunityScan({ newOnly = false, moreMode = false } = {}) {
   }
 
   let sent = 0;
-  for (const market of markets) {
-    try {
-      const pendingN2 = alerts.getPendingOpportunityCount();
-      const openN2      = wallet.getOpenPositionCount();
-      if (!moreMode && pendingN2 + openN2 >= MAX_FOCUS_EVENTS) {
-        console.log(`[scan] Focus cap (${MAX_FOCUS_EVENTS}) — stop mid-scan (${pendingN2} pending + ${openN2} open)`);
-        break;
+  try {
+    for (const market of markets) {
+      try {
+        const pendingN2 = alerts.getPendingOpportunityCount();
+        const openN2      = wallet.getOpenPositionCount();
+        if (!moreMode && pendingN2 + openN2 >= MAX_FOCUS_EVENTS) {
+          console.log(`[scan] Focus cap (${MAX_FOCUS_EVENTS}) — stop mid-scan (${pendingN2} pending + ${openN2} open)`);
+          break;
+        }
+        const maxThisPass = moreMode
+          ? Math.min(MORE_OPPORTUNITIES_COUNT, Math.max(0, MAX_FOCUS_EVENTS - pendingN2 - openN2))
+          : Math.min(MAX_OPPORTUNITIES_PER_SCAN, Math.max(0, MAX_FOCUS_EVENTS - pendingN2 - openN2));
+        if (maxThisPass <= 0 || sent >= maxThisPass) break;
+
+        console.log(`\n[scan] Analysing: "${market.question.slice(0, 60)}"`);
+        console.log(`[scan]   YES price: ${(market.yesPrice * 100).toFixed(1)}¢ | Vol: $${market.volumeUsd.toFixed(2)} | Days: ${market.daysLeft}`);
+
+        const r = await evaluateOpportunity(market, balance, { skipRecentAlert: true, verbose: true });
+        if (!r) continue;
+
+        if (!canSendOpportunityAlert()) {
+          console.log('[scan] Hourly opportunity alert cap reached — stop');
+          break;
+        }
+
+        console.log('[scan]   ✓ OPPORTUNITY — sending alert');
+        r.estimate.side = r.evResult.side;
+        r.estimate.effectivePrice = r.evResult.effectivePrice;
+
+        await alerts.sendOpportunityAlert(market, r.estimate, r.kellyFraction, r.betAmount, balance);
+        recordOpportunityAlert();
+        sent++;
+        await sleep(500);
+      } catch (err) {
+        console.error(`[scan] Error on "${market.question.slice(0, 40)}": ${err.message}`);
       }
-      const maxThisPass = moreMode
-        ? Math.min(MORE_OPPORTUNITIES_COUNT, Math.max(0, MAX_FOCUS_EVENTS - pendingN2 - openN2))
-        : Math.min(MAX_OPPORTUNITIES_PER_SCAN, Math.max(0, MAX_FOCUS_EVENTS - pendingN2 - openN2));
-      if (maxThisPass <= 0 || sent >= maxThisPass) break;
-
-      console.log(`\n[scan] Analysing: "${market.question.slice(0, 60)}"`);
-      console.log(`[scan]   YES price: ${(market.yesPrice * 100).toFixed(1)}¢ | Vol: $${market.volumeUsd.toFixed(2)} | Days: ${market.daysLeft}`);
-
-      const r = await evaluateOpportunity(market, balance, { skipRecentAlert: true, verbose: true });
-      if (!r) continue;
-
-      if (!canSendOpportunityAlert()) {
-        console.log('[scan] Hourly opportunity alert cap reached — stop');
-        break;
-      }
-
-      console.log('[scan]   ✓ OPPORTUNITY — sending alert');
-      r.estimate.side = r.evResult.side;
-      r.estimate.effectivePrice = r.evResult.effectivePrice;
-
-      await alerts.sendOpportunityAlert(market, r.estimate, r.kellyFraction, r.betAmount, balance);
-      recordOpportunityAlert();
-      sent++;
-      await sleep(500);
-    } catch (err) {
-      console.error(`[scan] Error on "${market.question.slice(0, 40)}": ${err.message}`);
     }
+  } finally {
+    await recordLastScanAt();
   }
 
   console.log(`[scan] ── Done. Sent ${sent} alert(s) ──\n`);
@@ -161,6 +170,8 @@ async function main() {
 
   // 1. Start Telegram bot
   createBot();
+
+  apiHttpServer = await startApiServer();
 
   // 2. Register scanner functions so /markets and /scan commands work
   registerScanners(scanMarkets, runScan, runMoreOpportunities);
@@ -216,6 +227,13 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 process.on('SIGINT', () => {
   (async () => {
     console.log('\n[shutdown] SIGINT received. Flushing DB…');
+    try {
+      if (apiHttpServer && typeof apiHttpServer.close === 'function') {
+        await new Promise(resolve => apiHttpServer.close(() => resolve()));
+      }
+    } catch (e) {
+      console.warn('[shutdown] API close:', e.message);
+    }
     try {
       const { flush } = require('./src/db/persistence');
       const { disconnect } = require('./src/db/client');

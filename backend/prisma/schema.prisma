@@ -1,68 +1,171 @@
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 generator client {
   provider = "prisma-client-js"
 }
 
-// ─── Paper wallet (singleton + positions + small dedup tables) ───────────────
-model WalletSettings {
-  id              Int     @id @default(1)
-  balance         Float
-  totalDeposited  Float
-  brierScores     Json
-  updatedAt       DateTime @updatedAt
+// ─── USER ────────────────────────────────────────────────────────────────────
+model User {
+  id             String   @id @default(cuid())
+  
+  // Auth — at least one must be set
+  telegramId     BigInt?  @unique   // from Telegram Login Widget
+  walletAddress  String?  @unique   // from Phantom/Backpack connect
+  
+  // Profile
+  firstName      String?
+  username       String?
+  photoUrl       String?
+  authMethod     String   @default("telegram") // "telegram" | "wallet"
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Bot settings
+  categories     String[] @default(["crypto", "politics"])
+  riskMode       String   @default("moderate")
+  maxAlertsPerDay Int     @default(3)
+  alertIntervalMin Int    @default(60)
+  telegramAlerts Boolean  @default(true)
+  isPaused       Boolean  @default(false)
+
+  // Relations
+  wallet         Wallet?
+  positions      PaperPosition[]
+  alerts         Alert[]
+  alertDedups    MarketAlertDedup[]
+  positionDedups PositionAlertDedup[]
+
+  @@map("users")
 }
 
-/// Open / closed paper positions. `payload` is the full app object (dates as ISO in JSON).
+// ─── WALLET (one per user, replaces singleton WalletSettings) ────────────────
+model Wallet {
+  id             String   @id @default(cuid())
+  userId         String   @unique
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  balance        Float    @default(1000)
+  startingBalance Float   @default(1000)
+  totalPnl       Float    @default(0)
+  wins           Int      @default(0)
+  losses         Int      @default(0)
+  totalBets      Int      @default(0)
+  brierScores    Json     @default("[]")
+  
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@map("wallets")
+}
+
+// ─── POSITIONS (add userId, keep payload for compatibility) ──────────────────
 model PaperPosition {
-  id         String   @id
-  status     String
-  marketId   String?
-  payload    Json
-  updatedAt  DateTime @updatedAt
+  id        String   @id
+  userId    String                           // ← NEW: owner
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  status    String                           // open | closed | resolved
+  marketId  String?
+  payload   Json                             // keep full position object
 
-  @@index([status])
+  // Promoted fields for fast queries (avoid full JSON scans)
+  side           String?                    // YES | NO
+  entryPrice     Float?
+  totalCost      Float?
+  myProbability  Float?
+  edge           Float?
+  pnl            Float?
+  exitReason     String?
+  openedAt       DateTime?
+  closedAt       DateTime?
+
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, status])                 // ← query by user + status
   @@index([marketId])
+  @@map("paper_positions")
 }
 
-/// marketId -> last market alert (dedup window)
+// ─── ALERTS (new — track every alert sent to every user) ─────────────────────
+model Alert {
+  id               String   @id @default(cuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  marketId         String
+  marketQuestion   String
+  category         String
+  marketPrice      Float
+  myProbability    Float
+  edge             Float
+  ev               Float
+  confidence       String   // high | medium | low
+  reasoning        String
+  keyFactors       String[]
+  suggestedAmount  Float
+  suggestedContracts Int
+  side             String   // YES | NO
+  
+  actionTaken      String?  // bet_full | bet_half | skipped | expired
+  positionId       String?  // set if bet was placed
+  sentViaTelegram  Boolean  @default(false)
+  
+  createdAt        DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([marketId])
+  @@map("alerts")
+}
+
+// ─── DEDUP TABLES (add userId — dedup is now per-user, not global) ───────────
 model MarketAlertDedup {
-  marketId    String   @id
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  marketId    String
   lastAlertAt BigInt
+
+  @@id([userId, marketId])                  // ← composite PK: user + market
+  @@index([userId])
+  @@map("market_alert_dedups")
 }
 
-/// positionId -> last position alert
 model PositionAlertDedup {
-  positionId  String   @id
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  positionId  String
   lastAlertAt BigInt
+
+  @@id([userId, positionId])
+  @@map("position_alert_dedups")
 }
 
-// ─── Price history: row per point (index-friendly; cap in app) ───────────────
+// ─── SHARED TABLES (unchanged — no user concept needed) ──────────────────────
+
 model PriceHistoryPoint {
-  id        String   @id @default(cuid())
-  marketId  String
-  ts        BigInt
-  sortIdx   Int
-  yesPrice  Float
-  noPrice   Float
-  volume    Float
+  id       String @id @default(cuid())
+  marketId String
+  ts       BigInt
+  sortIdx  Int
+  yesPrice Float
+  noPrice  Float
+  volume   Float
 
   @@index([marketId, sortIdx])
   @@index([marketId, ts])
+  @@map("price_history_points")
 }
 
-// ─── LLM cache: one row per market ───────────────────────────────────────────
 model LlmCacheEntry {
   marketId  String   @id
   expiresAt BigInt
   result    Json
   updatedAt DateTime @updatedAt
+
+  @@map("llm_cache_entries")
 }
 
-// ─── Daily Gemini RPD usage (per model) ────────────────────────────────────
 model GeminiDailyUsage {
   ymd       String
   modelId   String
@@ -71,11 +174,13 @@ model GeminiDailyUsage {
 
   @@id([ymd, modelId])
   @@index([ymd])
+  @@map("gemini_daily_usage")
 }
 
-// ─── Legacy key-value (read once, migrate, then ignored) ─────────────────────
+/// Lightweight key/value store (e.g. `lastScanAt` for `/api/stats/bot-status`).
 model AppStorage {
-  key       String   @id
-  value     Json
-  updatedAt DateTime @updatedAt
+  key   String @id
+  value String @db.Text
+
+  @@map("app_storage")
 }

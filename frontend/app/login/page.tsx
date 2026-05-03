@@ -1,8 +1,11 @@
 'use client'
 
+import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { Shield, TestTube2, Clock } from 'lucide-react'
+import { useWallet } from '@solana/wallet-adapter-react'
+import { useWalletModal } from '@solana/wallet-adapter-react-ui'
 import { NightAgentLogoMark } from '@/components/brand/night-agent-logo-mark'
 
 function TelegramIcon({ className }: { className?: string }) {
@@ -25,6 +28,14 @@ function WalletIcon({ className }: { className?: string }) {
 
 export default function LoginPage() {
   const router = useRouter()
+  const { setVisible } = useWalletModal()
+  const { connected } = useWallet()
+
+  useEffect(() => {
+    if (connected) {
+      router.push('/dashboard')
+    }
+  }, [connected, router])
 
   const telegramBtnStyle: React.CSSProperties = {
     background: 'var(--bg-card)',
@@ -92,7 +103,7 @@ export default function LoginPage() {
 
             <button
               type="button"
-              onClick={() => router.push('/dashboard')}
+              onClick={() => setVisible(true)}
               className="flex w-full items-center justify-center gap-2 rounded-xl border border-[var(--border-bright)] bg-[var(--bg-secondary)] px-4 py-3 text-[var(--text-primary)] transition-all hover:border-[var(--accent)]/40"
             >
               <WalletIcon className="h-5 w-5" />

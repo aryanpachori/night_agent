@@ -76,7 +76,7 @@ function BrowserFrameMock({ preferredSrc = '/dashboard.png' }: { preferredSrc?: 
         <span className="h-2 w-2 rounded-full bg-[#FEBC2E]" />
         <span className="h-2 w-2 rounded-full bg-[#28C840]" />
         <div className="ml-1 min-w-0 flex-1 truncate rounded-md border border-[var(--border)] bg-[var(--bg-card)] px-2 py-1 text-[9px] font-mono text-[var(--text-muted)] sm:ml-2 sm:px-3 sm:text-[10px]">
-          night-agent-548r.vercel.app/dashboard
+          your-domain.com/dashboard
         </div>
       </div>
       <div className="aspect-[16/10] bg-[var(--bg-primary)]">

@@ -22,6 +22,11 @@ if (process.env.VERCEL) {
 }
 
 const nextConfig: NextConfig = {
+  // `VERCEL` is not inlined into client bundles; this is, so `lib/api.ts` can use
+  // same-origin `/api/*` on Vercel while rewrites proxy to BACKEND_URL.
+  env: {
+    NEXT_PUBLIC_VERCEL_DEPLOY: process.env.VERCEL ? "1" : "",
+  },
   async rewrites() {
     const base = backend.replace(/\/$/, "")
     return [{ source: "/api/:path*", destination: `${base}/api/:path*` }]

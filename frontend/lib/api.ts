@@ -1,15 +1,8 @@
 import axios from "axios"
 
-/** Must be set in Vercel/hosted envs to your backend origin, e.g. `https://api.example.com`. */
-const envApiUrl = process.env.NEXT_PUBLIC_API_URL?.trim()
-
-if (!envApiUrl) {
-  throw new Error(
-    "Missing NEXT_PUBLIC_API_URL. Set it in your deployment environment and redeploy.",
-  )
-}
-
-export const PUBLIC_API_BASE_URL = envApiUrl
+/** Public API base URL. Default to same-origin proxy path to avoid mixed-content issues. */
+export const PUBLIC_API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL?.trim() || "/api"
 
 export const api = axios.create({
   baseURL: PUBLIC_API_BASE_URL,

@@ -120,6 +120,83 @@ router.post('/telegram', requireDb, async (req, res) => {
   }
 });
 
+// GET /api/auth/telegram-callback
+router.get('/telegram-callback', requireDb, async (req, res) => {
+  try {
+    const prisma = req.prisma;
+    const { hash, ...userData } = req.query;
+
+    if (!hash || userData.id == null) {
+      return res.redirect(`${(process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '')}/login?error=missing`);
+    }
+
+    const botToken = process.env.TELEGRAM_BOT_TOKEN;
+    const secretKey = crypto.createHash('sha256').update(botToken).digest();
+    const checkString = Object.keys(userData)
+      .sort()
+      .map(k => `${k}=${userData[k]}`)
+      .join('\n');
+    const expectedHash = crypto.createHmac('sha256', secretKey).update(checkString).digest('hex');
+
+    if (expectedHash !== hash) {
+      return res.redirect(`${(process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '')}/login?error=invalid`);
+    }
+
+    const authDate = Number(userData.auth_date);
+    if (!Number.isFinite(authDate) || Date.now() / 1000 - authDate > 86400) {
+      return res.redirect(`${(process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '')}/login?error=expired`);
+    }
+
+    const telegramId = BigInt(userData.id);
+    const existing = await prisma.user.findUnique({ where: { telegramId }, select: { id: true } });
+    const isNewUser = !existing;
+
+    const user = await prisma.user.upsert({
+      where: { telegramId },
+      update: {
+        firstName: userData.first_name ?? null,
+        username: userData.username ?? null,
+        photoUrl: userData.photo_url ?? null,
+        authMethod: 'telegram',
+      },
+      create: {
+        telegramId,
+        firstName: userData.first_name ?? null,
+        username: userData.username ?? null,
+        photoUrl: userData.photo_url ?? null,
+        authMethod: 'telegram',
+        wallet: {
+          create: {
+            balance: 1000,
+            startingBalance: 1000,
+            brierScores: [],
+          },
+        },
+      },
+    });
+
+    const secret = getJwtSecret();
+    const token = await createToken(secret, { userId: user.id, telegramId: String(userData.id) });
+
+    invalidateCache();
+
+    if (isNewUser) {
+      setImmediate(() => {
+        sendWelcomeMessage(telegramId, userData.first_name).catch(err =>
+          console.warn('[auth/telegram-callback] Welcome message failed:', err.message),
+        );
+      });
+    }
+
+    const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
+    return res.redirect(`${frontendUrl}/dashboard?token=${encodeURIComponent(token)}`);
+  } catch (err) {
+    console.error('[auth/telegram-callback]', err);
+    const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
+    return res.redirect(`${frontendUrl}/login?error=server`);
+  }
+});
+
 // POST /api/auth/wallet
 router.post('/wallet', requireDb, async (req, res) => {
   try {

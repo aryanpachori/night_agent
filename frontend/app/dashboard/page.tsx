@@ -1,6 +1,7 @@
 'use client'
 
 import { motion } from 'framer-motion'
+import { useEffect } from 'react'
 import { Wallet, TrendingUp, Target, Bell } from 'lucide-react'
 import { Topbar } from '@/components/layout/topbar'
 import { StatCard } from '@/components/dashboard/stat-card'
@@ -30,6 +31,18 @@ function currentPriceTrend(pos: UiOpenPosition): 'up' | 'down' {
 }
 
 export default function DashboardPage() {
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    const params = new URLSearchParams(window.location.search)
+    const token = params.get('token')
+    if (!token) return
+
+    localStorage.setItem('nightagent_token', token)
+    window.history.replaceState({}, '', '/dashboard')
+    window.location.reload()
+  }, [])
+
   const { data: stats, isLoading: statsLoading } = useSummaryStats()
   const { data: walletHistory } = useWalletHistory()
   const { data: positionsData } = usePositions('open')

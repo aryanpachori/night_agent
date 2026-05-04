@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { Shield, TestTube2, Clock } from 'lucide-react'
@@ -9,6 +9,12 @@ import { useWalletModal } from '@solana/wallet-adapter-react-ui'
 import toast from 'react-hot-toast'
 import { NightAgentLogoMark } from '@/components/brand/night-agent-logo-mark'
 import { useAuth } from '@/hooks/useAuth'
+
+declare global {
+  interface Window {
+    onTelegramAuth: (user: Record<string, unknown>) => void
+  }
+}
 
 function TelegramIcon({ className }: { className?: string }) {
   return (
@@ -50,18 +56,13 @@ export default function LoginPage() {
   const router = useRouter()
   const { setVisible } = useWalletModal()
   const { publicKey, signMessage, connected } = useSolanaWallet()
-  const { loginWithTelegram, loginWithWallet, user, isLoading } = useAuth()
-  const tgMountRef = useRef<HTMLDivElement>(null)
+  const { loginWithWallet, user, isLoading } = useAuth()
 
   useEffect(() => {
     if (!isLoading && user) {
       router.replace('/dashboard')
     }
   }, [user, isLoading, router])
-
-  const handleTelegramPlaceholder = () => {
-    toast.error('Set NEXT_PUBLIC_TELEGRAM_BOT_USERNAME or use wallet login.')
-  }
 
   const handleWalletLogin = async () => {
     if (!publicKey || !signMessage) {
@@ -79,42 +80,45 @@ export default function LoginPage() {
     }
   }
 
-  const onTelegramAuth = useCallback(
-    async (telegramUser: Record<string, unknown>) => {
-      try {
-        await loginWithTelegram(telegramUser)
-        router.push('/dashboard')
-      } catch {
-        toast.error('Telegram sign-in failed')
-      }
-    },
-    [loginWithTelegram, router],
-  )
-
   useEffect(() => {
-    const bot = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME
-    if (!bot || typeof window === 'undefined') return
-
-    ;(window as Window & { onTelegramAuth?: (user: Record<string, unknown>) => void }).onTelegramAuth = (u) =>
-      void onTelegramAuth(u)
-
-    const container = tgMountRef.current
-    if (!container) return
-
-    const script = document.createElement('script')
-    script.src = 'https://telegram.org/js/telegram-widget.js?22'
-    script.async = true
-    script.setAttribute('data-telegram-login', bot)
-    script.setAttribute('data-size', 'large')
-    script.setAttribute('data-radius', '8')
-    script.setAttribute('data-onauth', 'onTelegramAuth(user)')
-    container.appendChild(script)
-
-    return () => {
-      container.innerHTML = ''
-      delete (window as Window & { onTelegramAuth?: unknown }).onTelegramAuth
+    // Define callback on window BEFORE script loads
+    window.onTelegramAuth = async (user) => {
+      try {
+        const res = await fetch(
+          `${process.env.NEXT_PUBLIC_API_URL}/api/auth/telegram`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(user),
+          }
+        )
+        const data = await res.json()
+        if (data.token) {
+          localStorage.setItem('nightagent_token', data.token)
+          window.location.href = '/dashboard'
+        } else {
+          toast.error('Login failed: ' + (data.error ?? 'Unknown error'))
+        }
+      } catch (err) {
+        toast.error('Login failed. Please try again.')
+      }
     }
-  }, [onTelegramAuth])
+
+    // Clear container first
+    const container = document.getElementById('tg-login')
+    if (!container) return
+    container.innerHTML = ''
+
+    // Script 1 — widget
+    const widgetScript = document.createElement('script')
+    widgetScript.async = true
+    widgetScript.src = 'https://telegram.org/js/telegram-widget.js?23'
+    widgetScript.setAttribute('data-telegram-login', 'nightagentt_bot')
+    widgetScript.setAttribute('data-size', 'large')
+    widgetScript.setAttribute('data-onauth', 'onTelegramAuth(user)')
+    widgetScript.setAttribute('data-request-access', 'write')
+    container.appendChild(widgetScript)
+  }, [])
 
   const telegramBtnStyle: React.CSSProperties = {
     background: 'var(--bg-card)',
@@ -130,8 +134,6 @@ export default function LoginPage() {
     cursor: 'pointer',
     transition: 'border-color 0.15s',
   }
-
-  const telegramBotConfigured = Boolean(process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME)
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[var(--bg-primary)]">
@@ -166,19 +168,7 @@ export default function LoginPage() {
           </div>
 
           <div className="mb-6 space-y-3">
-            {telegramBotConfigured ? (
-              <div ref={tgMountRef} className="flex min-h-[44px] w-full justify-center [&_iframe]:rounded-[10px]" />
-            ) : (
-              <button
-                type="button"
-                style={telegramBtnStyle}
-                className="hover:border-[var(--accent)]/50"
-                onClick={handleTelegramPlaceholder}
-              >
-                <TelegramIcon className="text-[var(--warning)]" />
-                <span className="text-sm font-semibold">Continue with Telegram</span>
-              </button>
-            )}
+            <div id="tg-login" className="w-full flex justify-center min-h-[50px]" />
 
             <div className="flex items-center gap-3">
               <div className="h-px flex-1 bg-[var(--border)]" />

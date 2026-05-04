@@ -10,12 +10,6 @@ import toast from 'react-hot-toast'
 import { NightAgentLogoMark } from '@/components/brand/night-agent-logo-mark'
 import { useAuth } from '@/hooks/useAuth'
 
-declare global {
-  interface Window {
-    onTelegramAuth: (user: Record<string, unknown>) => void
-  }
-}
-
 function TelegramIcon({ className }: { className?: string }) {
   return (
     <svg className={className} width={20} height={20} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
@@ -81,29 +75,6 @@ export default function LoginPage() {
   }
 
   useEffect(() => {
-    // Define callback on window BEFORE script loads
-    window.onTelegramAuth = async (user) => {
-      try {
-        const res = await fetch(
-          `${process.env.NEXT_PUBLIC_API_URL}/api/auth/telegram`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(user),
-          }
-        )
-        const data = await res.json()
-        if (data.token) {
-          localStorage.setItem('nightagent_token', data.token)
-          window.location.href = '/dashboard'
-        } else {
-          toast.error('Login failed: ' + (data.error ?? 'Unknown error'))
-        }
-      } catch (err) {
-        toast.error('Login failed. Please try again.')
-      }
-    }
-
     // Clear container first
     const container = document.getElementById('tg-login')
     if (!container) return
@@ -115,7 +86,7 @@ export default function LoginPage() {
     widgetScript.src = 'https://telegram.org/js/telegram-widget.js?23'
     widgetScript.setAttribute('data-telegram-login', 'nightagentt_bot')
     widgetScript.setAttribute('data-size', 'large')
-    widgetScript.setAttribute('data-onauth', 'onTelegramAuth(user)')
+    widgetScript.setAttribute('data-auth-url', '/api/auth/telegram-callback')
     widgetScript.setAttribute('data-request-access', 'write')
     container.appendChild(widgetScript)
   }, [])

@@ -46,6 +46,7 @@ router.post('/telegram', requireDb, async (req, res) => {
     const secretKey = crypto.createHash('sha256').update(botToken).digest();
     const checkString = Object.keys(userData)
       .sort()
+      .filter(k => userData[k])
       .map(k => `${k}=${userData[k]}`)
       .join('\n');
     const expectedHash = crypto.createHmac('sha256', secretKey).update(checkString).digest('hex');

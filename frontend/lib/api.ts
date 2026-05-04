@@ -2,10 +2,11 @@ import axios from "axios"
 
 /**
  * Public API base URL.
- * Keep empty by default because callers already use `/api/...` paths.
+ * Callers already use `/api/...` paths, so treat `/api` base as empty.
  */
+const rawPublicApiBaseUrl = process.env.NEXT_PUBLIC_API_URL?.trim() || ""
 export const PUBLIC_API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL?.trim() || ""
+  rawPublicApiBaseUrl === "/api" ? "" : rawPublicApiBaseUrl
 
 export const api = axios.create({
   baseURL: PUBLIC_API_BASE_URL,
@@ -15,7 +16,17 @@ export const api = axios.create({
 
 api.interceptors.request.use((config) => {
   // Guard against accidental `/api` base + `/api/...` route concatenation.
-  if (typeof config.url === "string" && config.url.startsWith("/api/api/")) {
+  const baseURL = config.baseURL?.replace(/\/+$/, "")
+  if (
+    typeof config.url === "string" &&
+    config.url.startsWith("/api/") &&
+    baseURL?.endsWith("/api")
+  ) {
+    config.url = config.url.replace(/^\/api/, "")
+  } else if (
+    typeof config.url === "string" &&
+    config.url.startsWith("/api/api/")
+  ) {
     config.url = config.url.replace(/^\/api/, "")
   }
 

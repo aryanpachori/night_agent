@@ -14,6 +14,11 @@ export const api = axios.create({
 })
 
 api.interceptors.request.use((config) => {
+  // Guard against accidental `/api` base + `/api/...` route concatenation.
+  if (typeof config.url === "string" && config.url.startsWith("/api/api/")) {
+    config.url = config.url.replace(/^\/api/, "")
+  }
+
   if (typeof window !== "undefined") {
     const token = localStorage.getItem("nightagent_token")
     if (token) {

@@ -1,8 +1,15 @@
 import axios from "axios"
 
-/** Set `NEXT_PUBLIC_API_URL` to your Express API (e.g. same EC2 host: `http://127.0.0.1:4000` behind nginx, or public `https://api.example.com`). */
-export const PUBLIC_API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL?.trim() || "http://127.0.0.1:4000"
+/** Must be set in Vercel/hosted envs to your backend origin, e.g. `https://api.example.com`. */
+const envApiUrl = process.env.NEXT_PUBLIC_API_URL?.trim()
+
+if (!envApiUrl) {
+  throw new Error(
+    "Missing NEXT_PUBLIC_API_URL. Set it in your deployment environment and redeploy.",
+  )
+}
+
+export const PUBLIC_API_BASE_URL = envApiUrl
 
 export const api = axios.create({
   baseURL: PUBLIC_API_BASE_URL,

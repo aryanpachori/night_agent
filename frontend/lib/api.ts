@@ -1,8 +1,11 @@
 import axios from "axios"
 
-/** Public API base URL. Default to same-origin proxy path to avoid mixed-content issues. */
+/**
+ * Public API base URL.
+ * Keep empty by default because callers already use `/api/...` paths.
+ */
 export const PUBLIC_API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL?.trim() || "/api"
+  process.env.NEXT_PUBLIC_API_URL?.trim() || ""
 
 export const api = axios.create({
   baseURL: PUBLIC_API_BASE_URL,

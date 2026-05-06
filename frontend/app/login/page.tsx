@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { Shield, TestTube2, Clock } from 'lucide-react'
@@ -9,14 +9,6 @@ import { useWalletModal } from '@solana/wallet-adapter-react-ui'
 import toast from 'react-hot-toast'
 import { NightAgentLogoMark } from '@/components/brand/night-agent-logo-mark'
 import { useAuth } from '@/hooks/useAuth'
-
-function TelegramIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} width={20} height={20} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z" />
-    </svg>
-  )
-}
 
 function WalletIcon({ className }: { className?: string }) {
   return (
@@ -46,11 +38,19 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(bin)
 }
 
+const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').trim()
+type LoginStep = 'phone' | 'otp' | 'success'
+
 export default function LoginPage() {
   const router = useRouter()
   const { setVisible } = useWalletModal()
   const { publicKey, signMessage, connected } = useSolanaWallet()
   const { loginWithWallet, user, isLoading } = useAuth()
+  const [step, setStep] = useState<LoginStep>('phone')
+  const [phone, setPhone] = useState('')
+  const [code, setCode] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [countdown, setCountdown] = useState(0)
 
   useEffect(() => {
     if (!isLoading && user) {
@@ -58,7 +58,27 @@ export default function LoginPage() {
     }
   }, [user, isLoading, router])
 
-  const handleWalletLogin = async () => {
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const token = params.get('token')
+    const error = params.get('error')
+    if (token) {
+      localStorage.setItem('nightagent_token', token)
+      window.history.replaceState({}, '', '/login')
+      router.push('/dashboard')
+    }
+    if (error) {
+      toast.error(error === 'expired' ? 'Login link expired' : 'Login failed')
+    }
+  }, [router])
+
+  useEffect(() => {
+    if (countdown <= 0) return
+    const timer = window.setTimeout(() => setCountdown((c) => c - 1), 1000)
+    return () => window.clearTimeout(timer)
+  }, [countdown])
+
+  async function handleWalletLogin() {
     if (!publicKey || !signMessage) {
       toast.error('Connect a wallet that supports message signing.')
       return
@@ -74,36 +94,77 @@ export default function LoginPage() {
     }
   }
 
-  useEffect(() => {
-    // Clear container first
-    const container = document.getElementById('tg-login')
-    if (!container) return
-    container.innerHTML = ''
+  async function handleSendOTP() {
+    if (!phone.trim()) {
+      toast.error('Please enter your phone number')
+      return
+    }
+    setLoading(true)
+    try {
+      const res = await fetch(`${API_URL}/api/auth/send-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: phone.trim() }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error)
+      setStep('otp')
+      setCountdown(60)
+      toast.success('OTP sent to your Telegram app')
+    } catch (err: unknown) {
+      toast.error((err as Error).message ?? 'Failed to send OTP')
+    } finally {
+      setLoading(false)
+    }
+  }
 
-    // Script 1 — widget
-    const widgetScript = document.createElement('script')
-    widgetScript.async = true
-    widgetScript.src = 'https://telegram.org/js/telegram-widget.js?23'
-    widgetScript.setAttribute('data-telegram-login', 'nightagentt_bot')
-    widgetScript.setAttribute('data-size', 'large')
-    widgetScript.setAttribute('data-auth-url', '/api/auth/telegram-callback')
-    widgetScript.setAttribute('data-request-access', 'write')
-    container.appendChild(widgetScript)
-  }, [])
+  async function handleVerifyOTP() {
+    if (code.length < 4) {
+      toast.error('Please enter the full OTP code')
+      return
+    }
+    setLoading(true)
+    try {
+      const res = await fetch(`${API_URL}/api/auth/verify-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: phone.trim(), code: code.trim() }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error)
 
-  const telegramBtnStyle: React.CSSProperties = {
-    background: 'var(--bg-card)',
-    border: '1px solid var(--border-bright)',
-    color: 'var(--text-primary)',
-    borderRadius: '10px',
-    padding: '12px 24px',
-    width: '100%',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '10px',
-    cursor: 'pointer',
-    transition: 'border-color 0.15s',
+      localStorage.setItem('nightagent_token', data.token)
+      setStep('success')
+      window.setTimeout(() => router.push('/dashboard'), 1000)
+    } catch (err: unknown) {
+      toast.error((err as Error).message ?? 'Invalid OTP')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleResendOTP() {
+    if (countdown > 0) return
+    setLoading(true)
+    try {
+      const res = await fetch(`${API_URL}/api/auth/resend-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: phone.trim() }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error)
+      setCountdown(60)
+      toast.success('New OTP sent')
+    } catch (err: unknown) {
+      toast.error((err as Error).message ?? 'Failed to resend')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent, action: () => void) {
+    if (e.key === 'Enter') action()
   }
 
   return (
@@ -139,36 +200,123 @@ export default function LoginPage() {
           </div>
 
           <div className="mb-6 space-y-3">
-            <div id="tg-login" className="w-full flex justify-center min-h-[50px]" />
+            {step === 'phone' && (
+              <div className="space-y-3">
+                <div>
+                  <h2 className="text-sm font-semibold text-[var(--text-primary)]">Log in with Telegram</h2>
+                  <p className="text-xs text-[var(--text-muted)]">
+                    Enter your Telegram phone number to receive a code.
+                  </p>
+                </div>
+                <input
+                  type="tel"
+                  placeholder="+91 98765 43210"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  onKeyDown={(e) => handleKeyDown(e, handleSendOTP)}
+                  className="w-full rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] px-4 py-3 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent)]/50 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => void handleSendOTP()}
+                  disabled={loading || !phone.trim()}
+                  className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#2AABEE] py-3 text-sm font-semibold text-white transition-colors hover:bg-[#229ED9] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {loading ? 'Sending...' : 'Send code via Telegram'}
+                </button>
+              </div>
+            )}
 
-            <div className="flex items-center gap-3">
-              <div className="h-px flex-1 bg-[var(--border)]" />
-              <span className="text-[10px] text-[var(--text-muted)]">OR</span>
-              <div className="h-px flex-1 bg-[var(--border)]" />
-            </div>
+            {step === 'otp' && (
+              <div className="space-y-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStep('phone')
+                    setCode('')
+                  }}
+                  className="text-xs text-[var(--text-muted)] transition-colors hover:text-[var(--text-secondary)]"
+                >
+                  ← Back
+                </button>
+                <p className="text-xs text-[var(--text-muted)]">
+                  Enter the code sent in Telegram for <span className="text-[var(--text-secondary)]">{phone}</span>.
+                </p>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={6}
+                  placeholder="12345"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
+                  onKeyDown={(e) => handleKeyDown(e, handleVerifyOTP)}
+                  className="w-full rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] px-4 py-3 text-center font-mono text-2xl tracking-[0.45em] text-[var(--text-primary)] placeholder:tracking-normal focus:border-[var(--accent)]/50 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => void handleVerifyOTP()}
+                  disabled={loading || code.length < 4}
+                  className="flex min-h-11 w-full items-center justify-center rounded-xl bg-[var(--accent)] py-3 text-sm font-semibold text-[var(--bg-primary)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {loading ? 'Verifying...' : 'Verify & Login'}
+                </button>
+                <div className="text-center text-xs text-[var(--text-muted)]">
+                  {countdown > 0 ? (
+                    <span>Resend code in {countdown}s</span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => void handleResendOTP()}
+                      disabled={loading}
+                      className="text-[var(--accent)] transition-opacity hover:opacity-80 disabled:opacity-50"
+                    >
+                      Didn&apos;t get the code? Resend
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
 
-            {!connected ? (
-              <button
-                type="button"
-                onClick={() => setVisible(true)}
-                className="flex w-full items-center justify-center gap-2 rounded-xl border border-[var(--border-bright)] bg-[var(--bg-secondary)] px-4 py-3 text-[var(--text-primary)] transition-all hover:border-[var(--accent)]/40"
-              >
-                <WalletIcon className="h-5 w-5" />
-                <span className="text-sm font-semibold">Connect Wallet</span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => void handleWalletLogin()}
-                className="flex w-full items-center justify-center gap-2 rounded-xl border border-[var(--border-bright)] bg-[var(--bg-secondary)] px-4 py-3 text-[var(--text-primary)] transition-all hover:border-[var(--accent)]/40"
-              >
-                <WalletIcon className="h-5 w-5" />
-                <span className="text-sm font-semibold">Sign in with Wallet</span>
-              </button>
+            {step === 'success' && (
+              <div className="py-4 text-center">
+                <p className="text-3xl">✅</p>
+                <p className="mt-2 text-sm font-semibold text-[var(--text-primary)]">Logged in!</p>
+                <p className="text-xs text-[var(--text-muted)]">Redirecting to your dashboard...</p>
+              </div>
+            )}
+
+            {step === 'phone' && (
+              <>
+                <div className="flex items-center gap-3">
+                  <div className="h-px flex-1 bg-[var(--border)]" />
+                  <span className="text-[10px] text-[var(--text-muted)]">OR</span>
+                  <div className="h-px flex-1 bg-[var(--border)]" />
+                </div>
+
+                {!connected ? (
+                  <button
+                    type="button"
+                    onClick={() => setVisible(true)}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-[var(--border-bright)] bg-[var(--bg-secondary)] px-4 py-3 text-[var(--text-primary)] transition-all hover:border-[var(--accent)]/40"
+                  >
+                    <WalletIcon className="h-5 w-5" />
+                    <span className="text-sm font-semibold">Connect Wallet</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void handleWalletLogin()}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-[var(--border-bright)] bg-[var(--bg-secondary)] px-4 py-3 text-[var(--text-primary)] transition-all hover:border-[var(--accent)]/40"
+                  >
+                    <WalletIcon className="h-5 w-5" />
+                    <span className="text-sm font-semibold">Sign in with Wallet</span>
+                  </button>
+                )}
+              </>
             )}
           </div>
 
-          <div className="mb-5 space-y-2">
+          {step === 'phone' && <div className="mb-5 space-y-2">
             {[
               { icon: Shield, text: 'No password needed' },
               { icon: TestTube2, text: 'Paper trading — no real money' },
@@ -179,7 +327,7 @@ export default function LoginPage() {
                 <span>{text}</span>
               </div>
             ))}
-          </div>
+          </div>}
 
           <p className="text-center text-[12px] leading-relaxed text-[var(--text-muted)]">
             After connecting, you&apos;ll be taken directly to your dashboard with $1,000 paper USDC ready to trade. No

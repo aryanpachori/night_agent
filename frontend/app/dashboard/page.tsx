@@ -1,7 +1,7 @@
 'use client'
 
 import { motion } from 'framer-motion'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Wallet, TrendingUp, Target, Bell } from 'lucide-react'
 import { Topbar } from '@/components/layout/topbar'
 import { StatCard } from '@/components/dashboard/stat-card'
@@ -16,6 +16,7 @@ import { useWalletHistory } from '@/hooks/useWallet'
 import { usePositions } from '@/hooks/usePositions'
 import { useAlerts, useAlertStream } from '@/hooks/useAlerts'
 import { usePauseBot } from '@/hooks/useAuth'
+import { useAuth } from '@/hooks/useAuth'
 import { normalizeOpenPosition, type UiOpenPosition } from '@/lib/normalize-position'
 import { formatUSD, formatPct, formatTimeAgo } from '@/lib/utils'
 import Link from 'next/link'
@@ -30,7 +31,50 @@ function currentPriceTrend(pos: UiOpenPosition): 'up' | 'down' {
   return pos.currentPrice <= pos.entryPrice ? 'up' : 'down'
 }
 
+function StartBotBanner({ userId }: { userId: string }) {
+  const [dismissed, setDismissed] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false
+    return localStorage.getItem(`bot_started_${userId}`) === 'true'
+  })
+
+  if (dismissed) return null
+
+  const dismiss = () => {
+    localStorage.setItem(`bot_started_${userId}`, 'true')
+    setDismissed(true)
+  }
+
+  return (
+    <div className="flex items-start gap-3 rounded-2xl border border-[#2AABEE]/30 bg-[#2AABEE]/10 p-4">
+      <span className="text-xl">📱</span>
+      <div className="flex-1">
+        <p className="text-sm font-medium text-[var(--text-primary)]">One last step — start the bot</p>
+        <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+          Open @nightagentt_bot on Telegram and tap Start to receive bet alerts in your chat.
+        </p>
+        <a
+          href="https://t.me/nightagentt_bot"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-[#2AABEE] hover:opacity-80"
+          onClick={dismiss}
+        >
+          Open @nightagentt_bot →
+        </a>
+      </div>
+      <button
+        type="button"
+        onClick={dismiss}
+        className="text-lg leading-none text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
+      >
+        ×
+      </button>
+    </div>
+  )
+}
+
 export default function DashboardPage() {
+  const { user } = useAuth()
   useEffect(() => {
     if (typeof window === 'undefined') return
 
@@ -69,6 +113,7 @@ export default function DashboardPage() {
       <Topbar title="Dashboard" subtitle="Paper trading overview" />
 
       <div className="space-y-6 p-4 pb-6 sm:p-6">
+        {user?.id ? <StartBotBanner userId={user.id} /> : null}
         <motion.div
           className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4"
           initial={fadeUp.initial}

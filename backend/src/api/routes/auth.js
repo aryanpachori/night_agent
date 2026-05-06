@@ -10,6 +10,7 @@ const { requireDb } = require('../middleware/prisma');
 const { requireAuth, getJwtSecret } = require('../middleware/auth');
 const { invalidateCache } = require('../../bot/userManager');
 const { sendWelcomeMessage } = require('../../telegram/alerts');
+const { sendOTP, verifyOTP } = require('../telegramMtproto');
 
 const router = express.Router();
 
@@ -195,6 +196,123 @@ router.get('/telegram-callback', requireDb, async (req, res) => {
     console.error('[auth/telegram-callback]', err);
     const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
     return res.redirect(`${frontendUrl}/login?error=server`);
+  }
+});
+
+// POST /api/auth/send-otp
+router.post('/send-otp', requireDb, async (req, res) => {
+  try {
+    const { phone } = req.body || {};
+    if (!phone) {
+      return res.status(400).json({ error: 'Phone number is required' });
+    }
+
+    const normalized = phone.trim().startsWith('+') ? phone.trim() : `+${phone.trim()}`;
+    const digits = normalized.replace(/[^\d]/g, '');
+    if (digits.length < 8 || digits.length > 15) {
+      return res.status(400).json({ error: 'Invalid phone number format' });
+    }
+
+    await sendOTP(normalized);
+    return res.json({ ok: true, message: 'OTP sent to your Telegram app' });
+  } catch (err) {
+    const msg = String(err?.message || '');
+    console.error('[auth/send-otp]', msg);
+    const message = msg.includes('PHONE_NUMBER_INVALID')
+      ? 'Invalid phone number. Please check and try again.'
+      : msg.includes('FLOOD_WAIT')
+        ? 'Too many attempts. Please wait a few minutes.'
+        : msg || 'Failed to send OTP';
+    return res.status(400).json({ error: message });
+  }
+});
+
+// POST /api/auth/verify-otp
+router.post('/verify-otp', requireDb, async (req, res) => {
+  try {
+    const prisma = req.prisma;
+    const { phone, code } = req.body || {};
+    if (!phone || !code) {
+      return res.status(400).json({ error: 'Phone and code are required' });
+    }
+
+    const normalized = phone.trim().startsWith('+') ? phone.trim() : `+${phone.trim()}`;
+    const tgUser = await verifyOTP(normalized, code);
+
+    const user = await prisma.user.upsert({
+      where: { telegramId: BigInt(tgUser.telegramId) },
+      update: {
+        firstName: tgUser.firstName ?? null,
+        username: tgUser.username ?? null,
+        authMethod: 'telegram',
+      },
+      create: {
+        telegramId: BigInt(tgUser.telegramId),
+        firstName: tgUser.firstName ?? null,
+        username: tgUser.username ?? null,
+        authMethod: 'telegram',
+        telegramAlerts: true,
+        wallet: {
+          create: {
+            balance: 1000,
+            startingBalance: 1000,
+            brierScores: [],
+          },
+        },
+      },
+    });
+
+    fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: tgUser.telegramId,
+        text:
+          `👋 *Welcome to NightAgent, ${tgUser.firstName || 'trader'}\\!*` +
+          `\n\nYou're now logged in\\. I'll send you bet signals directly here\\.` +
+          `\n\n💰 Your paper wallet: *\\$1,000 USDC* ready to trade\\.` +
+          `\n\n_Tap below to open your dashboard_`,
+        parse_mode: 'MarkdownV2',
+        reply_markup: {
+          inline_keyboard: [[{ text: '📊 Open Dashboard', url: process.env.FRONTEND_URL }]],
+        },
+      }),
+    }).catch((sendErr) => {
+      console.log('[verify-otp] Could not send welcome message:', sendErr?.message || sendErr);
+    });
+
+    const secret = getJwtSecret();
+    const token = await createToken(secret, {
+      userId: user.id,
+      telegramId: tgUser.telegramId,
+    });
+
+    return res.json({
+      token,
+      user: {
+        id: user.id,
+        firstName: user.firstName,
+        username: user.username,
+        authMethod: 'telegram',
+      },
+    });
+  } catch (err) {
+    console.error('[auth/verify-otp]', err?.message || err);
+    return res.status(400).json({ error: err?.message || 'Verification failed' });
+  }
+});
+
+// POST /api/auth/resend-otp
+router.post('/resend-otp', requireDb, async (req, res) => {
+  try {
+    const { phone } = req.body || {};
+    if (!phone) return res.status(400).json({ error: 'Phone required' });
+
+    const normalized = phone.trim().startsWith('+') ? phone.trim() : `+${phone.trim()}`;
+    await sendOTP(normalized);
+    return res.json({ ok: true, message: 'New OTP sent' });
+  } catch (err) {
+    return res.status(400).json({ error: err?.message || 'Failed to resend OTP' });
   }
 });
 

@@ -1,5 +1,6 @@
 services:
-  backend:
+  api:
+    image: notifications_agent:latest
     build:
       context: .
       dockerfile: Dockerfile
@@ -11,7 +12,7 @@ services:
       - ./.env
     environment:
       API_PORT: 3000
-    command: sh -c "npm run db:push && npm start"
+    command: sh -c "npm run db:push && npm run start:api"
     ports:
       - "${HOST_PORT:-3000}:3000"
     healthcheck:
@@ -24,3 +25,18 @@ services:
       timeout: 5s
       retries: 10
       start_period: 20s
+
+  worker:
+    image: notifications_agent:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        DATABASE_URL: ${DATABASE_URL}
+    restart: unless-stopped
+    init: true
+    env_file:
+      - ./.env
+    environment:
+      START_API: "0"
+    command: npm run start:worker

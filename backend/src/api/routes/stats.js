@@ -69,9 +69,8 @@ router.get('/summary', requireDb, requireAuth, async (req, res) => {
 
 router.get('/bot-status', requireDb, requireAuth, async (req, res) => {
   try {
-    const [lastScanRow, groupRows, user] = await Promise.all([
+    const [lastScanRow, user] = await Promise.all([
       req.prisma.appStorage.findUnique({ where: { key: 'lastScanAt' } }),
-      req.prisma.priceHistoryPoint.groupBy({ by: ['marketId'], _count: { _all: true } }),
       req.prisma.user.findUnique({
         where: { id: req.user.userId },
         select: { isPaused: true },
@@ -91,7 +90,8 @@ router.get('/bot-status', requireDb, requireAuth, async (req, res) => {
       isPaused: user?.isPaused ?? false,
       lastScanAt: lastScanAt?.toISOString() ?? null,
       secondsSinceLastScan: secondsSince,
-      marketsWatching: Array.isArray(groupRows) ? groupRows.length : 0,
+      // Avoid expensive table-wide aggregations on each poll; this endpoint is hit every ~15s.
+      marketsWatching: null,
       scanIntervalSeconds: parseInt(process.env.SCAN_INTERVAL_MINUTES ?? '5', 10) * 60,
     });
   } catch (err) {

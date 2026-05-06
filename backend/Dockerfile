@@ -14,6 +14,6 @@ ENV DATABASE_URL=${DATABASE_URL}
 RUN npx prisma generate
 
 USER node
-EXPOSE 4000
+EXPOSE 3000
 
-CMD ["npm", "start"]
+CMD ["npm", "run", "start:api"]

@@ -4,7 +4,9 @@
   "description": "Polymarket prediction bot — paper trading via Telegram",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
+    "start": "npm run start:worker",
+    "start:worker": "node index.js",
+    "start:api": "node api.js",
     "dev": "node --watch index.js",
     "db:generate": "prisma generate",
     "db:push": "prisma db push"

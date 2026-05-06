@@ -50,9 +50,6 @@ const MAX_FOCUS_EVENTS = parseInt(process.env.MAX_FOCUS_EVENTS, 10)       || 2;
 const MAX_OPPORTUNITIES_PER_SCAN = parseInt(process.env.MAX_OPPORTUNITIES_PER_SCAN, 10) || 1;
 const MORE_OPPORTUNITIES_COUNT   = parseInt(process.env.MORE_OPPORTUNITIES_COUNT, 10)   || 2;
 
-/** Set when REST API starts (`JWT_SECRET` ≥ 16 chars). */
-let apiHttpServer = null;
-
 // ─── 60-second price poller ───────────────────────────────────────────────────
 async function pollPrices() {
   try {
@@ -218,7 +215,11 @@ async function main() {
   // 1. Start Telegram bot
   createBot();
 
-  apiHttpServer = await startApiServer();
+  if (process.env.START_API !== '0') {
+    await startApiServer();
+  } else {
+    console.log('[startup] API startup disabled for worker process (START_API=0).');
+  }
 
   if (getPrisma()) {
     const n = (await getActiveUsers()).length;
@@ -288,13 +289,6 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 process.on('SIGINT', () => {
   (async () => {
     console.log('\n[shutdown] SIGINT received. Flushing DB…');
-    try {
-      if (apiHttpServer && typeof apiHttpServer.close === 'function') {
-        await new Promise(resolve => apiHttpServer.close(() => resolve()));
-      }
-    } catch (e) {
-      console.warn('[shutdown] API close:', e.message);
-    }
     try {
       const { flush } = require('./src/db/persistence');
       const { disconnect } = require('./src/db/client');

@@ -71,7 +71,7 @@ export default function AlertsPage() {
   const [actingOn, setActingOn] = useState<string | null>(null)
   const [bettingAlert, setBettingAlert] = useState<Record<string, unknown> | null>(null)
 
-  const { data: alertsPayload } = useAlerts('pending', 50)
+  const { data: alertsPayload } = useAlerts('pending', 50, { refetchIntervalMs: false })
   const prevAlertCountRef = useRef<number | null>(null)
   useAlertStream(true)
 

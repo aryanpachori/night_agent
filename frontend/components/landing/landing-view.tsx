@@ -48,19 +48,19 @@ const howItWorks = [
     step: '02',
     title: 'Analyze',
     body:
-      'When something looks interesting, the AI reads recent news, checks current odds, and suggests how much you can bet with your paper balance.',
+      'When something looks interesting, the AI reads recent news, checks current odds, and suggests a safer paper bet size.',
   },
   {
     icon: Bell,
     step: '03',
     title: 'Alert',
     body:
-      'You receive a Telegram message with the market, the math, and a suggested bet size. One tap to act on Jupiter, or skip it. You are always in control.',
+      'You receive a Telegram message with the market, the math, and a suggested bet size. Place or skip the paper bet in seconds. You are always in control.',
   },
 ]
 
 const manualVsAgent = [
-  ['Browse markets by hand', 'Scans 3,400+ markets every 5min'],
+  ['Browse markets by hand', 'Scans 3,400+ markets every 5 minutes'],
   ['Bet based on gut feel', 'Black-Scholes probability model'],
   ['Miss new market openings', 'First-mover alerts within minutes'],
 ]
@@ -234,8 +234,8 @@ export function LandingView() {
           transition={{ duration: 0.6, delay: 0.85 }}
           className="relative z-10 mb-8 max-w-xl px-1 text-base leading-relaxed text-[var(--text-secondary)] sm:text-lg"
         >
-          AI finds good bets in prediction markets, explains them in plain English, and sends alerts fast. You decide
-          if you want to bet, and you can practice safely with paper trading.
+          AI finds high-edge setups in prediction markets, explains them in plain English, and sends alerts fast. You
+          stay in control and can practice safely with paper trading.
         </motion.p>
 
         <motion.div
@@ -323,9 +323,9 @@ export function LandingView() {
           The signal arrives before the crowd reacts.
         </h2>
         <p className="mx-auto mb-14 max-w-lg text-center text-sm leading-relaxed text-[var(--text-secondary)]">
-          Dashboard tracks your edge in real time.
+          Dashboard tracks your paper performance in real time.
           <br />
-          Telegram delivers the alert in seconds.
+          Telegram delivers the alert in seconds and lets you act quickly.
         </p>
         <div className="grid min-w-0 items-center gap-4 sm:gap-6 lg:grid-cols-2">
           <BrowserFrameMock />
@@ -403,7 +403,7 @@ export function LandingView() {
         <div className="mx-auto max-w-lg px-1">
           <h2 className="mb-4 text-3xl font-bold text-[var(--text-primary)] sm:text-5xl">Start in 2 minutes.</h2>
           <p className="mb-8 text-base text-[var(--text-muted)]">
-            Connect Telegram. Pick your categories. Get your first alert.
+            Connect Telegram. Pick your categories. Get your first alert and place your first paper bet.
           </p>
           <Button
             variant="primary"
@@ -428,12 +428,13 @@ export function LandingView() {
           </div>
           <p className="text-xs text-[var(--text-muted)]">Built on Jupiter · Solana · Paper trading only</p>
           <div className="flex items-center gap-5 text-xs text-[var(--text-muted)]">
-            <a href="https://github.com/aryan42116/night_agent" target="_blank" rel="noopener noreferrer" className="transition-colors hover:text-[var(--text-secondary)]">
+            <a href="https://github.com/aryanpachori/" target="_blank" rel="noopener noreferrer" className="transition-colors hover:text-[var(--text-secondary)]">
               GitHub
             </a>
-            <a href="https://twitter.com/aryan42116" target="_blank" rel="noopener noreferrer" className="transition-colors hover:text-[var(--text-secondary)]">
-              Twitter
+            <a href="https://x.com/aryan42116" target="_blank" rel="noopener noreferrer" className="transition-colors hover:text-[var(--text-secondary)]">
+              X
             </a>
+            <span>Discord: void2901</span>
           </div>
         </div>
       </footer>

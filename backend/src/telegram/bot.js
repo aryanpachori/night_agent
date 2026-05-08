@@ -544,8 +544,8 @@ function createBot() {
       `*Telegram menu*\n${msgs.DIV}\n` +
       `/alerts — recent alerts\n` +
       `/positions — your open positions\n` +
-      `/bet <alert_id> <amount> — place bet from alert\n` +
-      `/exit <position_id> — close open position at market\n` +
+      `/bet \\<alert\\_id\\> \\<amount\\> — place bet from alert\n` +
+      `/exit \\<position\\_id\\> — close open position at market\n` +
       `/balance — wallet snapshot\n` +
       `/status — live status view`;
     reply(msg.chat.id, menu);
@@ -615,7 +615,7 @@ function createBot() {
       const staked = Number(p.totalCost || payload.totalCost || 0);
       return `${i + 1}\\. *${msgs.esc(String(p.id).slice(-6))}* \\| ${msgs.esc(p.side || 'YES')} \\| ${msgs.escUsd(staked)}\n${msgs.esc(String(q).slice(0, 90))}`;
     });
-    await reply(msg.chat.id, `*Open positions*\n${msgs.DIV}\n${lines.join('\n\n')}\n\n_Use /exit <position_id>_`);
+    await reply(msg.chat.id, `*Open positions*\n${msgs.DIV}\n${lines.join('\n\n')}\n\n_Use /exit \\<position\\_id\\>_`);
   });
 
   bot.onText(/\/exit(?:@\w+)?\s+([^\s]+)/, async (msg, match) => {

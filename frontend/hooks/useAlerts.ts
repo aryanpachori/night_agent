@@ -2,11 +2,23 @@ import { useEffect, useRef } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { api, PUBLIC_API_BASE_URL } from "@/lib/api"
 
-export function useAlerts(type?: "bet" | "skipped" | "pending" | "all", limit = 20) {
+type UseAlertsOptions = {
+  /**
+   * Disable this when EventSource stream is active to avoid duplicate polling.
+   */
+  refetchIntervalMs?: number | false
+}
+
+export function useAlerts(
+  type?: "bet" | "skipped" | "pending" | "all",
+  limit = 20,
+  options?: UseAlertsOptions,
+) {
+  const refetchIntervalMs = options?.refetchIntervalMs ?? 10_000
   return useQuery({
     queryKey: ["alerts", type ?? "all", limit],
     queryFn: () => api.get("/api/alerts", { params: { type, limit } }).then((r) => r.data),
-    refetchInterval: 10 * 1000,
+    refetchInterval: refetchIntervalMs,
     staleTime: 5 * 1000,
   })
 }
@@ -22,75 +34,39 @@ export function useAlertStream(enabled = true) {
   useEffect(() => {
     if (!enabled || typeof window === "undefined") return
 
-    let mounted = true
-    const poll = window.setInterval(async () => {
-      try {
-        const { data } = await api.get("/api/alerts", { params: { limit: 10 } })
-        const alerts = Array.isArray(data?.alerts) ? data.alerts : []
-        for (const alert of alerts) {
-          const id = String(alert?.id ?? "")
-          if (!id) continue
-          if (!seenAlertIds.current.has(id)) {
-            seenAlertIds.current.add(id)
-            if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-              const side = String(alert?.side ?? "YES")
-              const stake = Math.round(Number(alert?.suggestedAmount ?? 0))
-              const win = Math.round(Number(alert?.suggestedContracts ?? 0))
-              const question = String(alert?.eventName ?? alert?.marketQuestion ?? "").slice(0, 80)
-              new Notification("New NightAgent alert", {
-                body: `${question} • ${side}${win > 0 ? ` • Bet $${stake} → Win $${win}` : ""}`,
-                icon: "/logo.png",
-              })
-            }
-          }
-        }
-      } catch {
-        /* polling best effort */
-      }
-    }, 10_000)
-
-    void api
-      .get("/api/alerts", { params: { limit: 50 } })
-      .then(({ data }) => {
-        if (!mounted) return
-        const alerts = Array.isArray(data?.alerts) ? data.alerts : []
-        for (const alert of alerts) {
-          const id = String(alert?.id ?? "")
-          if (id) seenAlertIds.current.add(id)
-        }
-      })
-      .catch(() => {})
-
-    return () => {
-      mounted = false
-      window.clearInterval(poll)
-    }
-  }, [enabled])
-
-  useEffect(() => {
-    if (!enabled || typeof window === "undefined") return
-
     const url = `${PUBLIC_API_BASE_URL}/api/alerts/stream`
     const es = new EventSource(url, { withCredentials: true })
     esRef.current = es
 
     es.addEventListener("new_alert", (e: MessageEvent) => {
-      void qc.invalidateQueries({ queryKey: ["alerts"] })
+      try {
+        const alert = JSON.parse(e.data) as Record<string, unknown>
+        const id = String(alert?.id ?? "")
+        if (!id) return
 
-      if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-        try {
-          const alert = JSON.parse(e.data) as Record<string, unknown>
+        // Keep all active alerts query variants hot without triggering network refetches.
+        qc.setQueriesData({ queryKey: ["alerts"] }, (oldData: unknown) => {
+          const oldObj = (oldData ?? {}) as Record<string, unknown>
+          const oldAlerts = Array.isArray(oldObj?.alerts)
+            ? (oldObj.alerts as Array<Record<string, unknown>>)
+            : []
+          if (oldAlerts.some((a) => String(a?.id ?? "") === id)) return oldObj
+          return { ...oldObj, alerts: [alert, ...oldAlerts] }
+        })
+
+        if (!seenAlertIds.current.has(id) && typeof Notification !== "undefined" && Notification.permission === "granted") {
+          seenAlertIds.current.add(id)
           const side = String(alert.side ?? "YES")
           const stake = Math.round(Number(alert.suggestedAmount ?? 50))
           const win = Math.round(Number(alert.suggestedContracts ?? 0))
-          const question = String(alert.marketQuestion ?? "").slice(0, 80)
+          const question = String(alert.eventName ?? alert.marketQuestion ?? "").slice(0, 80)
           new Notification("📣 New Bet Signal", {
             body: `Bet ${side} on ${question}${win > 0 ? ` — put in $${stake}, win $${win}` : ""}`,
             icon: "/logo.png",
           })
-        } catch {
-          /* ignore parse errors */
         }
+      } catch {
+        /* ignore parse errors */
       }
     })
 

@@ -6,7 +6,7 @@ export const metadata: Metadata = {
     absolute: 'NightAgent — AI Quant Layer for Jupiter Prediction Markets',
   },
   description:
-    "Scan 3,400+ markets, find mispriced bets with Black-Scholes AI, and get Telegram alerts the moment there's real edge.",
+    'Scan 3,400+ markets, find mispriced paper bets with AI, and get Telegram alerts the moment real edge appears.',
 }
 
 export default function HomePage() {

@@ -82,7 +82,7 @@ export default function DashboardPage() {
   const { data: stats, isLoading: statsLoading } = useSummaryStats()
   const { data: walletHistory } = useWalletHistory()
   const { data: positionsData } = usePositions('open')
-  const { data: alertsData } = useAlerts('all', 5)
+  const { data: alertsData } = useAlerts('all', 5, { refetchIntervalMs: false })
   const { data: botStatus } = useBotStatus()
   useAlertStream(true)
   const pauseBot = usePauseBot()

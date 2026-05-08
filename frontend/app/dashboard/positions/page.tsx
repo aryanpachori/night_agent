@@ -175,7 +175,7 @@ export default function PositionsPage() {
                           </td>
                           <td className="px-4 py-3">
                             <Button variant="danger" size="sm" onClick={() => setExitPos(pos)}>
-                              Exit
+                              Close bet
                             </Button>
                           </td>
                         </motion.tr>

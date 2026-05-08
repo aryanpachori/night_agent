@@ -34,6 +34,14 @@ model User {
   autoTakeProfitPct Float?  // e.g. 100 = exit when profit reaches 100% of stake (2x)
   autoStopLossPct   Float?  // e.g. 50  = exit when loss reaches 50% of stake
 
+  // Subscription / entitlements (Dodo Payments)
+  planTier                     String    @default("free") // free | pro
+  planStatus                   String    @default("inactive") // inactive | active | past_due | canceled
+  dodoCustomerId               String?
+  dodoSubscriptionId           String?
+  subscriptionCurrentPeriodEnd DateTime?
+  subscriptionCancelAtPeriodEnd Boolean  @default(false)
+
   // Relations
   wallet         Wallet?
   positions      PaperPosition[]

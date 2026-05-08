@@ -27,6 +27,10 @@ router.get('/', requireDb, requireAuth, async (req, res) => {
         isPaused: true,
         autoTakeProfitPct: true,
         autoStopLossPct: true,
+        planTier: true,
+        planStatus: true,
+        subscriptionCurrentPeriodEnd: true,
+        subscriptionCancelAtPeriodEnd: true,
         createdAt: true,
       },
     });
@@ -52,6 +56,21 @@ router.patch('/', requireDb, requireAuth, async (req, res) => {
     if (update.riskMode && !['conservative', 'moderate', 'aggressive'].includes(update.riskMode)) {
       return res.status(400).json({ error: 'Invalid riskMode' });
     }
+    const requestingAdvancedCategories = Array.isArray(update.categories)
+      ? update.categories.some(c => ['tech', 'culture', 'us elections'].includes(String(c).toLowerCase()))
+      : false;
+    if (requestingAdvancedCategories) {
+      const userPlan = await req.prisma.user.findUnique({
+        where: { id: req.user.userId },
+        select: { planTier: true },
+      });
+      if (String(userPlan?.planTier || 'free').toLowerCase() !== 'pro') {
+        return res.status(402).json({
+          error: 'Advanced category selection is available on Pro plan.',
+        });
+      }
+    }
+
     if (update.categories) {
       const VALID = ['crypto', 'politics', 'economics', 'sports', 'tech', 'culture', 'us elections'];
       if (!Array.isArray(update.categories) || update.categories.some(c => !VALID.includes(c))) {
@@ -87,6 +106,10 @@ router.patch('/', requireDb, requireAuth, async (req, res) => {
         telegramAlerts: true,
         autoTakeProfitPct: true,
         autoStopLossPct: true,
+        planTier: true,
+        planStatus: true,
+        subscriptionCurrentPeriodEnd: true,
+        subscriptionCancelAtPeriodEnd: true,
       },
     });
     invalidateCache();

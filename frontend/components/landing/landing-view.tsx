@@ -242,7 +242,7 @@ export function LandingView() {
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, delay: 1.05 }}
-          className="relative z-10 mb-6"
+          className="relative z-10 mb-6 flex flex-wrap items-center justify-center gap-3"
         >
           <Button
             variant="primary"
@@ -252,6 +252,14 @@ export function LandingView() {
           >
             Get Early Access →
           </Button>
+          <Button
+            variant="secondary"
+            size="lg"
+            onClick={() => router.push('/pricing')}
+            className="px-7 py-3.5 text-base"
+          >
+            View Pro Plan
+          </Button>
         </motion.div>
 
         <motion.p
@@ -260,7 +268,7 @@ export function LandingView() {
           transition={{ duration: 0.6, delay: 1.35 }}
           className="relative z-10 text-xs text-[var(--text-muted)]"
         >
-          No real money required · Paper trade to validate · 2-minute setup
+          Test mode only · No real money · Powered by Dodo Payments
         </motion.p>
       </section>
 
@@ -413,7 +421,9 @@ export function LandingView() {
           >
             Get Early Access →
           </Button>
-          <p className="text-xs text-[var(--text-muted)]">Free during early access · No credit card · Paper trading only</p>
+          <p className="text-xs text-[var(--text-muted)]">
+            Free during early access · Test mode only · Powered by Dodo Payments
+          </p>
         </div>
       </Section>
 

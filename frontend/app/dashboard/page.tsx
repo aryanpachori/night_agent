@@ -106,6 +106,26 @@ export default function DashboardPage() {
 
       <div className="space-y-6 p-4 pb-6 sm:p-6">
         {user?.id ? <StartBotBanner userId={user.id} /> : null}
+        {String(user?.planTier || 'free').toLowerCase() !== 'pro' && (
+          <div className="flex items-center gap-4 rounded-2xl border border-[var(--accent)]/25 bg-[var(--accent-glow)]/60 p-4">
+            <span className="text-2xl">⚡</span>
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-[var(--text-primary)]">Upgrade to NightAgent Pro</p>
+              <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+                Unlock priority alerts and advanced category selection for faster entries.
+              </p>
+              <p className="mt-1 text-[10px] text-[var(--text-muted)]">
+                Test mode only · No real money · Powered by Dodo Payments
+              </p>
+            </div>
+            <Link
+              href="/pricing"
+              className="whitespace-nowrap rounded-xl bg-[var(--accent)] px-4 py-2 text-xs font-semibold text-[var(--bg-primary)] transition-opacity hover:opacity-90"
+            >
+              See Pro Plan →
+            </Link>
+          </div>
+        )}
         <motion.div
           className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4"
           initial={fadeUp.initial}

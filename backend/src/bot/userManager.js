@@ -20,6 +20,7 @@ async function fetchActiveUsersFresh(prisma) {
       riskMode: true,
       maxAlertsPerDay: true,
       alertIntervalMin: true,
+      planTier: true,
       telegramAlerts: true,
       isPaused: true,
       autoTakeProfitPct: true,
@@ -59,7 +60,8 @@ async function hasActiveUsers() {
 async function canSendAlertToUser(prisma, user) {
   const start = new Date();
   start.setHours(0, 0, 0, 0);
-  const max = user.maxAlertsPerDay ?? 10;
+  const isPro = String(user.planTier || 'free').toLowerCase() === 'pro';
+  const max = user.maxAlertsPerDay ?? (isPro ? 30 : 10);
 
   const [alertsToday, lastAlert] = await Promise.all([
     prisma.alert.count({ where: { userId: user.id, createdAt: { gte: start } } }),
@@ -73,7 +75,7 @@ async function canSendAlertToUser(prisma, user) {
   if (alertsToday >= max) return false;
 
   // Per-user minimum interval between alerts (default 5 min)
-  const intervalMin = user.alertIntervalMin ?? 5;
+  const intervalMin = user.alertIntervalMin ?? (isPro ? 2 : 5);
   if (lastAlert) {
     const minsSinceLast = (Date.now() - new Date(lastAlert.createdAt).getTime()) / 60000;
     if (minsSinceLast < intervalMin) return false;

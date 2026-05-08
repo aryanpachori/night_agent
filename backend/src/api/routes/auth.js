@@ -421,6 +421,10 @@ router.get('/me', requireDb, requireAuth, async (req, res) => {
         isPaused: true,
         autoTakeProfitPct: true,
         autoStopLossPct: true,
+        planTier: true,
+        planStatus: true,
+        subscriptionCurrentPeriodEnd: true,
+        subscriptionCancelAtPeriodEnd: true,
         createdAt: true,
         wallet: {
           select: {

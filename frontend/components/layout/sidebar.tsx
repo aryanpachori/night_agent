@@ -3,7 +3,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { motion } from 'framer-motion'
 import type { LucideIcon } from 'lucide-react'
-import { LayoutDashboard, TrendingUp, Bell, Settings, LogOut } from 'lucide-react'
+import { LayoutDashboard, TrendingUp, Bell, Settings, LogOut, CreditCard } from 'lucide-react'
 import { NightAgentLogoMark } from '@/components/brand/night-agent-logo-mark'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/hooks/useAuth'
@@ -19,6 +19,7 @@ export const dashboardNavItems: DashboardNavItem[] = [
   { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
   { href: '/dashboard/alerts', icon: Bell, label: 'Alerts' },
   { href: '/dashboard/positions', icon: TrendingUp, label: 'My Bets' },
+  { href: '/pricing', icon: CreditCard, label: 'Pricing' },
   { href: '/dashboard/settings', icon: Settings, label: 'Settings' },
 ]
 

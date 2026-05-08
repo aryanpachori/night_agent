@@ -28,6 +28,10 @@ export interface AuthUser {
   /** Auto-exit thresholds from PATCH /api/user (optional until first save) */
   autoTakeProfitPct?: number | null
   autoStopLossPct?: number | null
+  planTier?: 'free' | 'pro' | string
+  planStatus?: 'inactive' | 'active' | 'past_due' | 'canceled' | string
+  subscriptionCurrentPeriodEnd?: string | null
+  subscriptionCancelAtPeriodEnd?: boolean
   wallet?: {
     balance: number
     totalPnl: number

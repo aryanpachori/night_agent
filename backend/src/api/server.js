@@ -13,6 +13,7 @@ const positionsRoutes = require('./routes/positions');
 const alertsRoutes = require('./routes/alerts');
 const marketsRoutes = require('./routes/markets');
 const statsRoutes = require('./routes/stats');
+const subscriptionsRoutes = require('./routes/subscriptions');
 
 function corsOrigins() {
   const origins = ['http://localhost:3000', 'http://127.0.0.1:3000'];
@@ -67,6 +68,7 @@ function createApiServer() {
   app.use('/api/alerts', alertsRoutes);
   app.use('/api/markets', marketsRoutes);
   app.use('/api/stats', statsRoutes);
+  app.use('/api/subscriptions', subscriptionsRoutes);
 
   app.get('/health', (req, res) => res.json({ ok: true, ts: Date.now() }));
 

@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge'
 import { formatUSD, formatPct } from '@/lib/utils'
 import { staggerItem, staggerContainer } from '@/lib/animations'
 import { RotateCcw, LogOut, Send } from 'lucide-react'
+import Link from 'next/link'
 import { useAuth, useUpdateSettings, usePauseBot, useTestTelegram } from '@/hooks/useAuth'
 import { useWallet as usePaperWallet, useResetWallet } from '@/hooks/useWallet'
 import { api } from '@/lib/api'
@@ -179,6 +180,22 @@ export default function SettingsPage() {
           initial="hidden"
           animate="visible"
         >
+          <motion.div variants={staggerItem}>
+            <Card className="p-5">
+              <div className="mb-4 flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="mb-1 text-sm font-semibold text-[var(--text-primary)]">Subscription</h3>
+                  <p className="text-xs text-[var(--text-muted)]">
+                    Plan: <span className="font-semibold text-[var(--text-primary)]">{String(user?.planTier || 'free').toUpperCase()}</span> · Status: {String(user?.planStatus || 'inactive')}
+                  </p>
+                </div>
+                <Link href="/pricing" className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-card)]">
+                  Manage plan
+                </Link>
+              </div>
+            </Card>
+          </motion.div>
+
           <motion.div variants={staggerItem}>
             <Card className="p-5">
               {!telegramLinked ? (

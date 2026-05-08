@@ -218,13 +218,8 @@ async function scanMarkets({ newOnly = false, categories = ['crypto'] } = {}) {
 
   const client  = jupClient();
   const scanCategories = normalizeCategories(categories);
-  // 'live' = tradable, active (default for opportunities). 'new' / 'trending' optional via env.
-  const raw     = (process.env.SCAN_JUPITER_FILTERS || 'live').trim();
-  const filters = raw
-    .split(',')
-    .map(s => s.trim())
-    .filter(s => s.length > 0);
-  if (filters.length === 0) filters.push('live');
+  // QA requirement: scan only live markets (no ended or not-yet-started feeds).
+  const filters = ['live'];
 
   const requests = [];
   for (const category of scanCategories) {

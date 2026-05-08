@@ -115,6 +115,7 @@ async function runOpportunityScan({ newOnly = false, moreMode = false } = {}) {
         scanCategories = [...new Set(userCategories.map((c) => String(c).toLowerCase().trim()).filter(Boolean))];
       }
     }
+    console.log(`[scan] Categories from user settings: ${scanCategories.join(', ')}`);
     markets = await scanMarkets({ newOnly, categories: scanCategories });
   } catch (err) {
     console.error(`[scan] Market scan failed: ${err.message}`);

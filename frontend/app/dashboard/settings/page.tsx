@@ -14,7 +14,7 @@ import { useAuth, useUpdateSettings, usePauseBot, useTestTelegram } from '@/hook
 import { useWallet as usePaperWallet, useResetWallet } from '@/hooks/useWallet'
 import { api } from '@/lib/api'
 
-const allCategories = ['Crypto', 'Politics', 'Economics', 'Sports', 'Entertainment', 'Science', 'Climate']
+const allCategories = ['Crypto', 'Politics', 'Economics', 'Sports', 'Tech', 'Culture', 'US Elections']
 
 const riskModes = [
   {
@@ -353,21 +353,16 @@ export default function SettingsPage() {
               <div className="flex flex-wrap gap-2">
                 {allCategories.map((cat) => {
                   const lower = cat.toLowerCase()
-                  const supported = ['crypto', 'politics', 'economics', 'sports'].includes(lower)
                   const active = categories.includes(lower)
                   return (
                     <button
                       key={cat}
                       type="button"
-                      disabled={!supported}
-                      title={supported ? undefined : 'Use Crypto/Politics/Economics/Sports for now'}
                       onClick={() => toggleCategory(cat)}
                       className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-all ${
-                        !supported
-                          ? 'cursor-not-allowed opacity-40 border-[var(--border)] bg-[var(--bg-secondary)] text-[var(--text-muted)]'
-                          : active
-                            ? 'border-[var(--accent)]/50 bg-[var(--accent-glow)] text-[var(--accent-bright)] shadow-[0_0_12px_var(--accent-glow)]'
-                            : 'border-[var(--border)] bg-[var(--bg-secondary)] text-[var(--text-muted)] hover:border-[var(--border-bright)] hover:text-[var(--text-secondary)]'
+                        active
+                          ? 'border-[var(--accent)]/50 bg-[var(--accent-glow)] text-[var(--accent-bright)] shadow-[0_0_12px_var(--accent-glow)]'
+                          : 'border-[var(--border)] bg-[var(--bg-secondary)] text-[var(--text-muted)] hover:border-[var(--border-bright)] hover:text-[var(--text-secondary)]'
                       }`}
                     >
                       {cat}

@@ -37,9 +37,19 @@ export default function PositionsPage() {
     { id: 'closed', label: 'Closed', count: closedRows.length },
   ]
 
-  const totalStaked = openRows.reduce((s, p) => s + p.totalCost, 0)
-  const totalWorth = openRows.reduce((s, p) => s + p.currentValue, 0)
-  const totalPnl = openRows.reduce((s, p) => s + p.pnl, 0)
+  const openTotals = {
+    staked: openRows.reduce((s, p) => s + p.totalCost, 0),
+    worth: openRows.reduce((s, p) => s + p.currentValue, 0),
+    pnl: openRows.reduce((s, p) => s + p.pnl, 0),
+  }
+
+  const closedTotals = {
+    staked: closedRows.reduce((s, p) => s + p.totalCost, 0),
+    worth: closedRows.reduce((s, p) => s + (p.totalCost + p.pnl), 0), // returned amount
+    pnl: closedRows.reduce((s, p) => s + p.pnl, 0),
+  }
+
+  const totals = activeTab === 'closed' ? closedTotals : openTotals
 
   return (
     <div className="flex flex-1 flex-col">
@@ -61,20 +71,20 @@ export default function PositionsPage() {
             {
               icon: DollarSign,
               label: 'Total Staked',
-              value: formatUSD(totalStaked),
+              value: formatUSD(totals.staked),
               color: 'text-[var(--text-primary)]',
             },
             {
               icon: TrendingUp,
               label: 'Currently Worth',
-              value: formatUSD(totalWorth),
+              value: formatUSD(totals.worth),
               color: 'text-[var(--text-primary)]',
             },
             {
-              icon: totalPnl >= 0 ? TrendingUp : TrendingDown,
-              label: totalPnl >= 0 ? 'Total Gain' : 'Total Loss',
-              value: (totalPnl >= 0 ? '+' : '') + formatUSD(totalPnl),
-              color: totalPnl >= 0 ? 'text-[var(--success)]' : 'text-[var(--danger)]',
+              icon: totals.pnl >= 0 ? TrendingUp : TrendingDown,
+              label: totals.pnl >= 0 ? 'Total Gain' : 'Total Loss',
+              value: (totals.pnl >= 0 ? '+' : '') + formatUSD(totals.pnl),
+              color: totals.pnl >= 0 ? 'text-[var(--success)]' : 'text-[var(--danger)]',
             },
           ].map(({ icon: Icon, label, value, color }) => (
             <div
@@ -194,13 +204,13 @@ export default function PositionsPage() {
                 {openRows.length > 0 && (
                   <div className="flex items-center gap-6 border-t border-[var(--border)] bg-[var(--bg-secondary)] px-4 py-3 sm:gap-8">
                     <span className="text-xs text-[var(--text-muted)]">Totals</span>
-                    <span className="font-mono text-xs text-[var(--text-primary)]">{formatUSD(totalStaked)}</span>
-                    <span className="font-mono text-xs text-[var(--text-primary)]">{formatUSD(totalWorth)}</span>
+                    <span className="font-mono text-xs text-[var(--text-primary)]">{formatUSD(totals.staked)}</span>
+                    <span className="font-mono text-xs text-[var(--text-primary)]">{formatUSD(totals.worth)}</span>
                     <span
-                      className={`font-mono text-xs font-semibold ${totalPnl >= 0 ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}
+                      className={`font-mono text-xs font-semibold ${totals.pnl >= 0 ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}
                     >
-                      {totalPnl >= 0 ? '+' : ''}
-                      {formatUSD(totalPnl)}
+                      {totals.pnl >= 0 ? '+' : ''}
+                      {formatUSD(totals.pnl)}
                     </span>
                   </div>
                 )}

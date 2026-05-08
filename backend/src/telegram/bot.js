@@ -139,6 +139,7 @@ function createBot() {
   // System owner chat — used only for admin commands (/scan, /positions, etc.)
   // Optional: if not set, admin commands are disabled from Telegram.
   const ownerChatId = process.env.TELEGRAM_CHAT_ID || null;
+  const chatId = ownerChatId;
 
   alerts.setBot(bot);
 
@@ -159,6 +160,165 @@ function createBot() {
     } catch {
       return null;
     }
+  }
+
+  function isRegisteredUser(dbUser) {
+    return !!dbUser?.id;
+  }
+
+  async function getUserWallet(userId) {
+    const prisma = getPrisma();
+    if (!prisma || !userId) return null;
+    return prisma.wallet.findUnique({
+      where: { userId },
+      select: { balance: true },
+    });
+  }
+
+  async function getUserOpenPositions(userId, limit = 10) {
+    const prisma = getPrisma();
+    if (!prisma || !userId) return [];
+    return prisma.paperPosition.findMany({
+      where: { userId, status: 'open' },
+      orderBy: { openedAt: 'desc' },
+      take: limit,
+    });
+  }
+
+  async function getUserRecentAlerts(userId, limit = 5) {
+    const prisma = getPrisma();
+    if (!prisma || !userId) return [];
+    return prisma.alert.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
+  }
+
+  async function markAlertAction(userId, alertId, actionTaken, positionId = null) {
+    const prisma = getPrisma();
+    if (!prisma) return;
+    await prisma.alert.updateMany({
+      where: { id: alertId, userId },
+      data: { actionTaken, positionId },
+    });
+  }
+
+  async function placeBetFromAlert(userId, alert, amount) {
+    const prisma = getPrisma();
+    if (!prisma) throw new Error('Database unavailable');
+
+    const ep = Number(alert.marketPrice ?? 0);
+    const amt = Number(amount);
+    if (!Number.isFinite(ep) || ep <= 0) throw new Error('Invalid market price');
+    if (!Number.isFinite(amt) || amt < 1) throw new Error('Min bet is $1');
+
+    const walletRow = await prisma.wallet.findUnique({
+      where: { userId },
+      select: { balance: true },
+    });
+    if (!walletRow || Number(walletRow.balance) < amt) throw new Error('Insufficient balance');
+
+    const openCount = await prisma.paperPosition.count({
+      where: { userId, status: 'open' },
+    });
+    if (openCount >= (parseInt(process.env.MAX_OPEN_POSITIONS || '10', 10) || 10)) {
+      throw new Error('Max open positions reached');
+    }
+
+    const contracts = Math.floor(amt / ep);
+    if (contracts < 1) throw new Error('Bet too small for current price');
+    const actualCost = contracts * ep;
+    const now = new Date();
+    const positionId = `pos_${crypto.randomUUID().replace(/-/g, '')}`;
+    const payload = {
+      id: positionId,
+      userId,
+      marketId: alert.marketId,
+      marketQuestion: alert.marketQuestion ?? '',
+      category: alert.category ?? 'crypto',
+      side: alert.side,
+      contracts,
+      entryPrice: ep,
+      totalCost: actualCost,
+      potentialPayout: contracts,
+      potentialProfit: contracts - actualCost,
+      status: 'open',
+      openedAt: now.toISOString(),
+      source: 'telegram',
+    };
+
+    await prisma.$transaction([
+      prisma.paperPosition.create({
+        data: {
+          id: positionId,
+          userId,
+          status: 'open',
+          marketId: alert.marketId,
+          side: alert.side,
+          entryPrice: ep,
+          totalCost: actualCost,
+          openedAt: now,
+          payload,
+        },
+      }),
+      prisma.wallet.update({
+        where: { userId },
+        data: { balance: { decrement: actualCost }, totalBets: { increment: 1 } },
+      }),
+    ]);
+
+    return payload;
+  }
+
+  async function closeUserPositionAtMarket(userId, positionId) {
+    const prisma = getPrisma();
+    if (!prisma) throw new Error('Database unavailable');
+    const row = await prisma.paperPosition.findFirst({
+      where: { id: positionId, userId, status: 'open' },
+    });
+    if (!row) throw new Error('Position not found or already closed');
+
+    const payload = row.payload && typeof row.payload === 'object' ? row.payload : {};
+    const market = await fetchMarket(row.marketId);
+    if (!market) throw new Error('Could not fetch market');
+    const closePrice = row.side === 'YES' ? market.yesPrice : market.noPrice;
+    const contracts = Number(payload.contracts ?? 0);
+    const entry = Number(row.entryPrice ?? 0);
+    const exitValue = closePrice * contracts;
+    const pnl = row.side === 'YES' ? (closePrice - entry) * contracts : (entry - closePrice) * contracts;
+    const now = new Date();
+
+    await prisma.$transaction([
+      prisma.paperPosition.update({
+        where: { id: row.id },
+        data: {
+          status: 'closed',
+          pnl,
+          closePrice,
+          exitReason: 'manual_telegram',
+          closedAt: now,
+          payload: {
+            ...payload,
+            status: 'closed',
+            pnl,
+            closePrice,
+            exitReason: 'manual_telegram',
+            closedAt: now.toISOString(),
+          },
+        },
+      }),
+      prisma.wallet.update({
+        where: { userId },
+        data: {
+          balance: { increment: exitValue },
+          totalPnl: { increment: pnl },
+          ...(pnl >= 0 ? { wins: { increment: 1 } } : { losses: { increment: 1 } }),
+        },
+      }),
+    ]);
+
+    return { pnl, closePrice, marketQuestion: row.marketQuestion ?? payload.marketQuestion ?? 'Market event', side: row.side };
   }
 
   /** Admin-only guard — blocks non-owners for system commands. */
@@ -377,10 +537,114 @@ function createBot() {
     reply(msg.chat.id, msgs.helpMessage());
   });
 
+  bot.onText(/\/menu(?:@\w+)?/, async msg => {
+    const dbUser = await getDbUser(msg);
+    if (!isRegisteredUser(dbUser) && !guard(msg)) return;
+    const menu =
+      `*Telegram menu*\n${msgs.DIV}\n` +
+      `/alerts — recent alerts\n` +
+      `/positions — your open positions\n` +
+      `/bet <alert_id> <amount> — place bet from alert\n` +
+      `/exit <position_id> — close open position at market\n` +
+      `/balance — wallet snapshot\n` +
+      `/status — live status view`;
+    reply(msg.chat.id, menu);
+  });
+
+  bot.onText(/\/alerts(?:@\w+)?/, async msg => {
+    const dbUser = await getDbUser(msg);
+    if (!isRegisteredUser(dbUser)) return;
+    const alertsRows = await getUserRecentAlerts(dbUser.id, 5);
+    if (!alertsRows.length) {
+      await reply(msg.chat.id, 'No alerts yet\\.');
+      return;
+    }
+    for (const a of alertsRows) {
+      const actionable = !a.actionTaken && (Date.now() - new Date(a.createdAt).getTime()) < 5 * 60 * 1000;
+      const event = msgs.esc(a.marketQuestion || a.marketId || 'Market event');
+      const line =
+        `*Alert* \\#${msgs.esc(String(a.id).slice(-6))}\n` +
+        `${event}\n` +
+        `Side: *${msgs.esc(a.side || 'YES')}* \\| Price: *${msgs.escFmt((Number(a.marketPrice || 0)) * 100, 1)}¢*` +
+        (actionable ? `\n_Use /bet ${msgs.esc(a.id)} 10 to act quickly_` : `\nStatus: ${msgs.esc(a.actionTaken || 'expired')}`);
+      await reply(msg.chat.id, line);
+    }
+  });
+
+  bot.onText(/\/bet(?:@\w+)?\s+([^\s]+)\s+([0-9]+(?:\.[0-9]+)?)/, async (msg, match) => {
+    const dbUser = await getDbUser(msg);
+    if (!isRegisteredUser(dbUser)) return;
+    const alertId = String(match?.[1] || '').trim();
+    const amount = Number(match?.[2] || 0);
+    const prisma = getPrisma();
+    if (!prisma) return;
+    const alert = await prisma.alert.findFirst({
+      where: { id: alertId, userId: dbUser.id },
+    });
+    if (!alert) {
+      await reply(msg.chat.id, 'Alert not found\\.');
+      return;
+    }
+    if (alert.actionTaken) {
+      await reply(msg.chat.id, `Alert already acted: ${msgs.esc(alert.actionTaken)}\\.`);
+      return;
+    }
+    try {
+      const pos = await placeBetFromAlert(dbUser.id, alert, amount);
+      await markAlertAction(dbUser.id, alert.id, 'bet_full', pos.id);
+      await reply(
+        msg.chat.id,
+        `*Bet placed*\n${msgs.DIV}\n${msgs.esc(pos.marketQuestion)}\nSide: *${msgs.esc(pos.side)}* \\| Staked: *${msgs.escUsd(pos.totalCost)}*`,
+      );
+    } catch (err) {
+      await reply(msg.chat.id, `Bet failed: ${msgs.esc(err.message)}\\.`);
+    }
+  });
+
+  bot.onText(/\/positions(?:@\w+)?/, async msg => {
+    const dbUser = await getDbUser(msg);
+    if (!isRegisteredUser(dbUser)) return;
+    const positions = await getUserOpenPositions(dbUser.id, 10);
+    if (!positions.length) {
+      await reply(msg.chat.id, 'No open positions\\.');
+      return;
+    }
+    const lines = positions.map((p, i) => {
+      const payload = p.payload && typeof p.payload === 'object' ? p.payload : {};
+      const q = payload.marketQuestion || p.marketQuestion || p.marketId;
+      const staked = Number(p.totalCost || payload.totalCost || 0);
+      return `${i + 1}\\. *${msgs.esc(String(p.id).slice(-6))}* \\| ${msgs.esc(p.side || 'YES')} \\| ${msgs.escUsd(staked)}\n${msgs.esc(String(q).slice(0, 90))}`;
+    });
+    await reply(msg.chat.id, `*Open positions*\n${msgs.DIV}\n${lines.join('\n\n')}\n\n_Use /exit <position_id>_`);
+  });
+
+  bot.onText(/\/exit(?:@\w+)?\s+([^\s]+)/, async (msg, match) => {
+    const dbUser = await getDbUser(msg);
+    if (!isRegisteredUser(dbUser)) return;
+    const positionId = String(match?.[1] || '').trim();
+    try {
+      const closed = await closeUserPositionAtMarket(dbUser.id, positionId);
+      await reply(
+        msg.chat.id,
+        `*Position closed*\n${msgs.DIV}\n${msgs.esc(closed.marketQuestion)}\nSide: *${msgs.esc(closed.side)}* \\| Exit: *${msgs.escFmt(closed.closePrice * 100, 1)}¢*\nPnL: *${closed.pnl >= 0 ? '\\+' : '\\-'}${msgs.escUsd(Math.abs(closed.pnl))}*`,
+      );
+    } catch (err) {
+      await reply(msg.chat.id, `Exit failed: ${msgs.esc(err.message)}\\.`);
+    }
+  });
+
   // ── /balance ───────────────────────────────────────────────────────────────
   bot.onText(/\/balance/, msg => {
-    if (!guard(msg)) return;
-    reply(msg.chat.id, msgs.balanceMessage(wallet.getStats()));
+    if (guard(msg)) {
+      reply(msg.chat.id, msgs.balanceMessage(wallet.getStats()));
+      return;
+    }
+    getDbUser(msg).then(async dbUser => {
+      if (!isRegisteredUser(dbUser)) return;
+      const w = await getUserWallet(dbUser.id);
+      const bal = Number(w?.balance ?? 0);
+      await reply(msg.chat.id, `*Paper wallet*\n${msgs.DIV}\nBalance: ${msgs.escUsd(bal)} USDC`);
+    }).catch(() => {});
   });
 
   async function sendLivePositionsList(chatId) {

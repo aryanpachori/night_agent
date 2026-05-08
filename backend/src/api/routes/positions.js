@@ -123,6 +123,74 @@ function extractCloseTimeMs(jupData) {
   return null;
 }
 
+function normalizeResult(raw) {
+  const v = String(raw ?? '').trim().toLowerCase();
+  if (v === 'yes') return 'yes';
+  if (v === 'no') return 'no';
+  return null;
+}
+
+async function settleEndedOpenPosition({
+  prisma,
+  userId,
+  pos,
+  payload,
+  currentPrice,
+  marketStatus,
+  marketResult,
+}) {
+  const contractsForClose = Number(
+    payload.contracts
+    ?? (Number(pos.entryPrice ?? 0) > 0 ? Math.floor(Number(pos.totalCost ?? 0) / Number(pos.entryPrice ?? 0)) : 0),
+  );
+  let closePrice = Number(currentPrice);
+  let exitReason = 'market_end_auto';
+  if (marketResult === 'yes' || marketResult === 'no') {
+    const yesWon = marketResult === 'yes';
+    const ourSideWon = (pos.side === 'YES' && yesWon) || (pos.side === 'NO' && !yesWon);
+    closePrice = ourSideWon ? 1 : 0;
+    exitReason = 'resolved_auto';
+  } else if (marketStatus === 'closed' && !Number.isFinite(closePrice)) {
+    closePrice = 0;
+  }
+
+  if (!Number.isFinite(closePrice) || contractsForClose <= 0) return null;
+  const exitValue = closePrice * contractsForClose;
+  const settledPnl = exitValue - Number(pos.totalCost ?? 0);
+  const settledAt = new Date();
+  await prisma.$transaction([
+    prisma.paperPosition.update({
+      where: { id: pos.id },
+      data: {
+        status: 'closed',
+        pnl: settledPnl,
+        exitReason,
+        closedAt: settledAt,
+        payload: {
+          ...payload,
+          status: 'closed',
+          closePrice,
+          pnl: settledPnl,
+          exitReason,
+          closedAt: settledAt.toISOString(),
+        },
+      },
+    }),
+    prisma.wallet.update({
+      where: { userId },
+      data: {
+        balance: { increment: exitValue },
+        totalPnl: { increment: settledPnl },
+        ...(settledPnl >= 0 ? { wins: { increment: 1 } } : { losses: { increment: 1 } }),
+      },
+    }),
+    prisma.positionAlertDedup.deleteMany({
+      where: { userId, positionId: pos.id },
+    }),
+  ]);
+  return { closePrice, settledPnl, exitReason, settledAt };
+}
+
 async function getIdempotentResult(prisma, key) {
   const row = await prisma.appStorage.findUnique({ where: { key } });
   if (!row?.value) return null;
@@ -179,14 +247,18 @@ router.get('/', requireDb, requireAuth, async (req, res) => {
 
         if (pos.status === 'open' && pos.marketId) {
           let closeMs = Number(payload.closeTimeMs ?? 0) || null;
+          let marketStatus = null;
+          let marketResult = null;
           try {
             const jupRes = await fetch(`${JUPITER_BASE}/markets/${pos.marketId}`, {
               headers: JUPITER_KEY ? { 'x-api-key': JUPITER_KEY } : {},
-              signal: AbortSignal.timeout(4000),
+              signal: AbortSignal.timeout(8000),
             });
             if (jupRes.ok) {
               const jupData = await jupRes.json();
               const pricing = jupData.pricing ?? {};
+              marketStatus = String(jupData?.status ?? jupData?.market?.status ?? '').toLowerCase() || null;
+              marketResult = normalizeResult(jupData?.result ?? jupData?.market?.result);
               if (pos.side === 'YES') {
                 currentPrice = Number(pricing.buyYesPriceUsd ?? pricing.buyYesCost ?? 0) / 1_000_000;
               } else {
@@ -239,6 +311,26 @@ router.get('/', requireDb, requireAuth, async (req, res) => {
               timeLabel = 'Ended';
               hoursLeft = 0;
               daysLeft = 0;
+            }
+          }
+
+          // Safety net: if we can determine that the market ended, auto-close open rows.
+          if (pos.status === 'open' && timeLabel === 'Ended') {
+            const settled = await settleEndedOpenPosition({
+              prisma: req.prisma,
+              userId: req.user.userId,
+              pos,
+              payload,
+              currentPrice,
+              marketStatus,
+              marketResult,
+            });
+            if (settled) {
+              pos.status = 'closed';
+              pos.pnl = settled.settledPnl;
+              pos.exitReason = settled.exitReason;
+              pos.closedAt = settled.settledAt;
+              pos.closePrice = settled.closePrice;
             }
           }
         }

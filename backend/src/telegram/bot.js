@@ -204,6 +204,29 @@ function createBot() {
     });
   }
 
+  async function markLatestPendingAlertAction(userId, marketId, side, actionTaken, positionId = null) {
+    const prisma = getPrisma();
+    if (!prisma || !userId || !marketId) return;
+    const alert = await prisma.alert.findFirst({
+      where: {
+        userId,
+        marketId,
+        side,
+        actionTaken: null,
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    });
+    if (!alert?.id) return;
+    await prisma.alert.update({
+      where: { id: alert.id },
+      data: {
+        actionTaken,
+        positionId: positionId ?? null,
+      },
+    });
+  }
+
   async function placeBetFromAlert(userId, alert, amount) {
     const prisma = getPrisma();
     if (!prisma) throw new Error('Database unavailable');
@@ -999,6 +1022,9 @@ function createBot() {
       if (size === 'skip') {
         alerts.pendingOpportunities.delete(token);
         if (marketId) wallet.markMarketAlerted(marketId);
+        if (pending.userId && marketId) {
+          await markLatestPendingAlertAction(pending.userId, marketId, pending.analysis.side, 'skipped');
+        }
         bot.sendMessage(replyTarget, 'Skipped\\.', { parse_mode: 'MarkdownV2' });
         return;
       }
@@ -1041,6 +1067,15 @@ function createBot() {
         });
         if (marketId) wallet.markMarketAlerted(marketId);
         alerts.pendingOpportunities.delete(token);
+        if (pending.userId && marketId) {
+          await markLatestPendingAlertAction(
+            pending.userId,
+            marketId,
+            pending.analysis.side,
+            size === 'half' ? 'bet_half' : 'bet_full',
+            position.id,
+          );
+        }
         reply(replyTarget, msgs.betConfirmedMessage(position));
       } catch (err) {
         bot.sendMessage(replyTarget, `Failed to place bet: ${err.message}`);

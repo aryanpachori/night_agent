@@ -267,6 +267,29 @@ function createBot() {
     }
   }
 
+  function normalizeMarketForPosition(market) {
+    if (!market) return null;
+    const id = market.id ?? market.marketId ?? null;
+    const yesPrice = Number(market.yesPrice ?? market.buyYesPrice ?? 0);
+    const noRaw = market.noPrice ?? market.buyNoPrice;
+    const noPrice = Number(noRaw != null ? noRaw : (yesPrice > 0 && yesPrice < 1 ? 1 - yesPrice : 0));
+    const title = String(market.title ?? '').trim();
+    const question = String(market.question ?? '').trim();
+    const marketQuestion = title || question || String(market.marketQuestion ?? '').trim() || (id ? `Market ${String(id)}` : 'Market event');
+    const closeTime = market.closeTime ?? market.endTime ?? market.resolutionTime ?? null;
+    return {
+      id,
+      marketQuestion,
+      category: market.category ?? 'crypto',
+      yesPrice,
+      noPrice,
+      closeTime,
+      eventTitle: String(market.eventTitle ?? '').trim(),
+      outcomeTitle: String(market.outcomeTitle ?? '').trim(),
+      volumeUsd: market.volumeUsd ?? null,
+    };
+  }
+
   // ── /start — open to all; registered users get welcome, others get signup link ────
   bot.onText(/\/start/, async msg => {
     const { esc } = msgs;
@@ -657,7 +680,8 @@ function createBot() {
 
       await bot.answerCallbackQuery(query.id);
 
-      const marketId = pending.marketId ?? pending.market?.id;
+      const normalizedMarket = normalizeMarketForPosition(pending.market);
+      const marketId = pending.marketId ?? normalizedMarket?.id;
       const replyTarget = msgChat;
 
       if (size === 'skip') {
@@ -686,11 +710,12 @@ function createBot() {
       betAmount = Math.max(5, Math.round(betAmount * 100) / 100);
 
       try {
+        const mq = normalizedMarket?.marketQuestion || pending.market.question || pending.market.title || `Market ${marketId}`;
         const position = wallet.openPosition({
           marketId,
-          marketQuestion: pending.market.question,
-          eventTitle:     pending.market.eventTitle || '',
-          outcomeTitle:   pending.market.outcomeTitle || '',
+          marketQuestion: mq,
+          eventTitle:     normalizedMarket?.eventTitle || '',
+          outcomeTitle:   normalizedMarket?.outcomeTitle || '',
           side:           pending.analysis.side,
           entryPrice:     pending.entryPrice,
           betAmount,
@@ -699,8 +724,8 @@ function createBot() {
           ev:             pending.ev,
           kellyFraction:  pending.kellyFraction,
           confidence:     pending.analysis.confidence,
-          closeTime:      pending.market.closeTime ?? null,
-          volumeUsd:      pending.market.volumeUsd ?? null,
+          closeTime:      normalizedMarket?.closeTime ?? null,
+          volumeUsd:      normalizedMarket?.volumeUsd ?? null,
         });
         if (marketId) wallet.markMarketAlerted(marketId);
         alerts.pendingOpportunities.delete(token);

@@ -125,9 +125,10 @@ export default function PositionsPage() {
                           variants={tableRow}
                           className="border-b border-[var(--border)] transition-colors hover:bg-[var(--bg-card-hover)]"
                         >
-                          <td className="max-w-[240px] px-4 py-3 md:max-w-[min(340px,30vw)]">
+                          <td className="max-w-[260px] px-4 py-3 md:max-w-[min(380px,34vw)]">
+                            <p className="text-sm font-medium text-[var(--text-primary)]">{pos.eventName}</p>
                             <Tooltip content={pos.marketQuestion}>
-                              <span className="block truncate text-xs text-[var(--text-primary)]">
+                              <span className="mt-0.5 block truncate text-xs text-[var(--text-muted)]">
                                 {pos.marketQuestion}
                               </span>
                             </Tooltip>
@@ -142,6 +143,9 @@ export default function PositionsPage() {
                           </td>
                           <td className="px-4 py-3 font-mono text-xs text-[var(--text-primary)]">
                             {formatUSD(pos.currentValue)}
+                            <p className="text-[10px] text-[var(--text-muted)]">
+                              @ {Math.round((pos.currentPrice ?? 0) * 100)}¢
+                            </p>
                           </td>
                           <td className="px-4 py-3">
                             <span
@@ -151,9 +155,23 @@ export default function PositionsPage() {
                               {winning ? '+' : ''}
                               {formatUSD(pos.pnl)}
                             </span>
+                            {pos.pnlPercent !== 0 && (
+                              <p className={`font-mono text-[10px] ${winning ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>
+                                {winning ? '+' : ''}
+                                {pos.pnlPercent.toFixed(1)}%
+                              </p>
+                            )}
                           </td>
                           <td className="px-4 py-3 font-mono text-xs text-[var(--text-secondary)]">
-                            {pos.daysLeft == null ? '—' : pos.daysLeft === 0 ? 'Today' : `${pos.daysLeft}d`}
+                            <span className={`rounded-md px-2 py-1 ${
+                              pos.timeLabel === 'Ended'
+                                ? 'bg-[var(--danger-dim)] text-[var(--danger)]'
+                                : pos.daysLeft === 0 && pos.hoursLeft !== null
+                                  ? 'bg-[var(--warning)]/15 text-[var(--warning)]'
+                                  : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)]'
+                            }`}>
+                              {pos.timeLabel ?? '—'}
+                            </span>
                           </td>
                           <td className="px-4 py-3">
                             <Button variant="danger" size="sm" onClick={() => setExitPos(pos)}>

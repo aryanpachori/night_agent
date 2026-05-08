@@ -9,9 +9,10 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { formatUSD, formatPct } from '@/lib/utils'
 import { staggerItem, staggerContainer } from '@/lib/animations'
-import { RotateCcw, LogOut, MessageCircle, Send } from 'lucide-react'
+import { RotateCcw, LogOut, Send } from 'lucide-react'
 import { useAuth, useUpdateSettings, usePauseBot, useTestTelegram } from '@/hooks/useAuth'
 import { useWallet as usePaperWallet, useResetWallet } from '@/hooks/useWallet'
+import { api } from '@/lib/api'
 
 const allCategories = ['Crypto', 'Politics', 'Economics', 'Sports', 'Entertainment', 'Science', 'Climate']
 
@@ -59,6 +60,11 @@ export default function SettingsPage() {
   const [autoSlPct, setAutoSlPct] = useState<number | null>(null)
   const [changed, setChanged] = useState(false)
   const [showResetConfirm, setShowResetConfirm] = useState(false)
+  const [phone, setPhone] = useState('')
+  const [code, setCode] = useState('')
+  const [step, setStep] = useState<'phone' | 'otp' | 'done'>('phone')
+  const [loading, setLoading] = useState(false)
+  const [countdown, setCountdown] = useState(0)
 
   useEffect(() => {
     if (!user) return
@@ -73,6 +79,20 @@ export default function SettingsPage() {
     setAutoSlPct(sl)
     setChanged(false)
   }, [user])
+
+  useEffect(() => {
+    if (user?.telegramId) {
+      setStep('done')
+    } else {
+      setStep('phone')
+    }
+  }, [user?.telegramId])
+
+  useEffect(() => {
+    if (countdown <= 0) return
+    const timer = window.setTimeout(() => setCountdown((c) => c - 1), 1000)
+    return () => window.clearTimeout(timer)
+  }, [countdown])
 
   const resetChanges = () => {
     const b = baseline.current
@@ -119,6 +139,76 @@ export default function SettingsPage() {
   const initial =
     (user?.firstName?.[0] || user?.username?.[0] || user?.walletAddress?.[0] || '?').toUpperCase()
 
+  const telegramLinked = !!user?.telegramId
+
+  async function handleSendOTP() {
+    if (!phone.trim()) {
+      toast.error('Please enter your phone number')
+      return
+    }
+    setLoading(true)
+    try {
+      await api.post('/api/auth/send-otp', { phone: phone.trim() })
+      setStep('otp')
+      setCountdown(60)
+      toast.success('OTP sent to your Telegram app')
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+      toast.error(msg ?? 'Failed to send OTP')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleVerifyOTP() {
+    if (code.length < 4) {
+      toast.error('Please enter the full OTP code')
+      return
+    }
+    setLoading(true)
+    try {
+      await api.post('/api/auth/verify-otp', { phone: phone.trim(), code: code.trim() })
+      await refetchUser()
+      setStep('done')
+      setCode('')
+      toast.success('Telegram connected')
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+      toast.error(msg ?? 'Invalid OTP')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleResendOTP() {
+    if (countdown > 0) return
+    setLoading(true)
+    try {
+      await api.post('/api/auth/resend-otp', { phone: phone.trim() })
+      setCountdown(60)
+      toast.success('New OTP sent')
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+      toast.error(msg ?? 'Failed to resend code')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleDisconnectTelegram() {
+    setLoading(true)
+    try {
+      await api.patch('/api/user', { telegramAlerts: false })
+      await refetchUser()
+      setStep('done')
+      toast.success('Telegram alerts disabled')
+    } catch {
+      toast.error('Failed to disconnect Telegram')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   return (
     <div className="flex flex-1 flex-col">
       <Topbar title="Settings" subtitle="Customize how the bot works for you" />
@@ -130,6 +220,124 @@ export default function SettingsPage() {
           initial="hidden"
           animate="visible"
         >
+          <motion.div variants={staggerItem}>
+            <Card className="p-5">
+              {!telegramLinked ? (
+                <>
+                  <h3 className="mb-1 text-sm font-semibold text-[var(--text-primary)]">📱 Get alerts on Telegram</h3>
+                  <p className="mb-4 text-xs text-[var(--text-muted)]">
+                    Connect your Telegram to receive bet signals directly in your chat.
+                  </p>
+
+                  <div className="space-y-3">
+                    <div className="flex gap-2">
+                      <input
+                        type="tel"
+                        placeholder="+91 98765 43210"
+                        value={phone}
+                        onChange={(e) => setPhone(e.target.value)}
+                        className="w-full rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] px-4 py-2.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent)]/50 focus:outline-none"
+                      />
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        disabled={loading || !phone.trim()}
+                        onClick={() => void handleSendOTP()}
+                      >
+                        Send Code
+                      </Button>
+                    </div>
+
+                    {step === 'otp' && (
+                      <>
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            maxLength={6}
+                            placeholder="12345"
+                            value={code}
+                            onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
+                            className="w-full rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] px-4 py-2.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent)]/50 focus:outline-none"
+                          />
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            disabled={loading || code.length < 4}
+                            onClick={() => void handleVerifyOTP()}
+                          >
+                            Verify
+                          </Button>
+                        </div>
+                        <div className="text-xs text-[var(--text-muted)]">
+                          {countdown > 0 ? (
+                            <span>Resend code in {countdown}s</span>
+                          ) : (
+                            <button
+                              type="button"
+                              className="text-[var(--accent)] hover:opacity-80"
+                              onClick={() => void handleResendOTP()}
+                              disabled={loading}
+                            >
+                              Resend code
+                            </button>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <h3 className="mb-1 text-sm font-semibold text-[var(--text-primary)]">📱 Telegram Connected ✅</h3>
+                  <p className="mb-4 text-xs text-[var(--text-muted)]">
+                    {user?.username ? `@${user.username}` : 'Telegram linked'} · alerts {user?.telegramAlerts ? 'ON' : 'OFF'}
+                  </p>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant={user?.telegramAlerts ? 'secondary' : 'ghost'}
+                      size="sm"
+                      onClick={() =>
+                        updateSettings.mutate(
+                          { telegramAlerts: !user?.telegramAlerts },
+                          {
+                            onSuccess: () => toast.success(`Alerts ${!user?.telegramAlerts ? 'enabled' : 'disabled'}`),
+                            onError: () => toast.error('Failed to update alerts'),
+                          },
+                        )
+                      }
+                    >
+                      Alerts: {user?.telegramAlerts ? 'ON' : 'OFF'}
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      icon={<Send className="h-3 w-3" />}
+                      loading={testTelegram.isPending}
+                      onClick={() =>
+                        testTelegram.mutate(undefined, {
+                          onSuccess: () => toast.success('Test message sent'),
+                          onError: () => toast.error('Telegram test failed'),
+                        })
+                      }
+                    >
+                      Send test message
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={loading}
+                      onClick={() => void handleDisconnectTelegram()}
+                    >
+                      Disconnect
+                    </Button>
+                  </div>
+                </>
+              )}
+            </Card>
+          </motion.div>
+
           <motion.div variants={staggerItem}>
             <Card className="p-5">
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -356,40 +564,6 @@ export default function SettingsPage() {
                   </Button>
                 </div>
               )}
-            </Card>
-          </motion.div>
-
-          <motion.div variants={staggerItem}>
-            <Card className="p-5">
-              <h3 className="mb-4 text-sm font-semibold text-[var(--text-primary)]">Telegram</h3>
-              <div className="flex items-center gap-3 rounded-xl border border-[var(--success)]/30 bg-[var(--success-dim)] p-3">
-                <div className="flex h-8 w-8 items-center justify-center rounded-full border border-[#2AABEE]/30 bg-[#2AABEE]/20">
-                  <MessageCircle className="h-4 w-4 text-[#2AABEE]" />
-                </div>
-                <div className="flex-1">
-                  <p className="text-xs font-medium text-[var(--text-primary)]">
-                    {user?.telegramId ? 'Linked' : 'Not linked'}
-                  </p>
-                  <p className="font-mono text-xs text-[var(--text-muted)]">
-                    {user?.username ? `@${user.username}` : user?.telegramId ?? 'Use Telegram login'}
-                  </p>
-                </div>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  icon={<Send className="h-3 w-3" />}
-                  loading={testTelegram.isPending}
-                  disabled={!user?.telegramId}
-                  onClick={() =>
-                    testTelegram.mutate(undefined, {
-                      onSuccess: () => toast.success('Test message sent'),
-                      onError: () => toast.error('Telegram test failed'),
-                    })
-                  }
-                >
-                  Test
-                </Button>
-              </div>
             </Card>
           </motion.div>
 

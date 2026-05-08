@@ -166,6 +166,24 @@ export default function DashboardPage() {
           </Card>
         </motion.div>
 
+        {!user?.telegramId && (
+          <div className="flex items-center gap-4 rounded-2xl border border-[#2AABEE]/25 bg-[#2AABEE]/10 p-4">
+            <span className="text-2xl">📱</span>
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-[var(--text-primary)]">Connect Telegram to get alerts</p>
+              <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+                Receive bet signals directly on your phone — takes 30 seconds
+              </p>
+            </div>
+            <Link
+              href="/dashboard/settings"
+              className="whitespace-nowrap rounded-xl bg-[#2AABEE] px-4 py-2 text-xs font-semibold text-white transition-opacity hover:opacity-90"
+            >
+              Connect →
+            </Link>
+          </div>
+        )}
+
         <motion.div
           className="grid grid-cols-1 gap-4 lg:grid-cols-3"
           initial={fadeUp.initial}

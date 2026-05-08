@@ -6,10 +6,45 @@ const { requireDb } = require('../middleware/prisma');
 const { requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
+const JUPITER_BASE = process.env.JUPITER_PREDICTION_BASE_URL ?? 'https://api.jup.ag/prediction/v1';
+const JUPITER_KEY = process.env.JUPITER_PREDICTION_API_KEY ?? process.env.JUPITER_API_KEY ?? '';
 
 function asObjectPayload(payload) {
   if (payload && typeof payload === 'object' && !Array.isArray(payload)) return { ...payload };
   return {};
+}
+
+function buildPositionEventName(question, side) {
+  if (!question || String(question).length < 5) return 'Market event';
+
+  const q = String(question).toLowerCase();
+  let token = null;
+  if (q.includes('bitcoin') || q.includes('btc')) token = 'Bitcoin';
+  else if (q.includes('ethereum') || q.includes('eth')) token = 'Ethereum';
+  else if (q.includes('solana') || q.includes('sol')) token = 'Solana';
+  else if (q.includes('bnb')) token = 'BNB';
+  else if (q.includes('xrp')) token = 'XRP';
+  else if (q.includes('doge')) token = 'Dogecoin';
+  else if (q.includes('hyper') || q.includes('hype')) token = 'Hyperliquid';
+
+  if (!token) {
+    const cleaned = String(question)
+      .replace(/This market will resolve.*?if /gi, '')
+      .replace(/the .* price at.*$/gi, '')
+      .trim();
+    return cleaned.slice(0, 60) || String(question).slice(0, 60);
+  }
+
+  const timeMatch = String(question).match(/(\d+)\s*(min|minute|hour|hr)/i);
+  const timeStr = timeMatch ? ` in ${timeMatch[1]}${timeMatch[2][0]}` : '';
+  const isUpMarket = q.includes(' up') || q.includes('upper') || q.includes('above');
+  const isDownMarket = q.includes(' down') || q.includes('lower') || q.includes('below');
+
+  let direction = '';
+  if (side === 'YES') direction = isUpMarket ? '↑ UP' : isDownMarket ? '↓ DOWN' : '↑ UP';
+  else direction = isUpMarket ? '↓ DOWN' : isDownMarket ? '↑ UP' : '↓ DOWN';
+
+  return `${token} ${direction}${timeStr}`;
 }
 
 router.get('/', requireDb, requireAuth, async (req, res) => {
@@ -29,19 +64,105 @@ router.get('/', requireDb, requireAuth, async (req, res) => {
       req.prisma.paperPosition.count({ where }),
     ]);
 
-    const formatted = positions.map(pos => ({
-      id: pos.id,
-      status: pos.status,
-      marketId: pos.marketId,
-      side: pos.side,
-      entryPrice: pos.entryPrice,
-      totalCost: pos.totalCost,
-      pnl: pos.pnl,
-      exitReason: pos.exitReason,
-      openedAt: pos.openedAt,
-      closedAt: pos.closedAt,
-      ...asObjectPayload(pos.payload),
-    }));
+    const formatted = await Promise.all(
+      positions.map(async (pos) => {
+        const payload = asObjectPayload(pos.payload);
+        let currentPrice = Number(pos.entryPrice ?? 0);
+        let daysLeft = null;
+        let hoursLeft = null;
+        let timeLabel = '—';
+        let marketQuestion = String(
+          pos.marketQuestion
+          ?? payload.marketQuestion
+          ?? payload.question
+          ?? '',
+        );
+
+        const isBadQuestion = ['down', 'up', 'yes', 'no', ''].includes(marketQuestion.toLowerCase().trim());
+        if (isBadQuestion) {
+          marketQuestion = `Market ${String(pos.marketId ?? '').slice(0, 8) || 'event'}`;
+        }
+
+        if (pos.status === 'open' && pos.marketId) {
+          try {
+            const jupRes = await fetch(`${JUPITER_BASE}/markets/${pos.marketId}`, {
+              headers: JUPITER_KEY ? { 'x-api-key': JUPITER_KEY } : {},
+              signal: AbortSignal.timeout(4000),
+            });
+            if (jupRes.ok) {
+              const jupData = await jupRes.json();
+              const pricing = jupData.pricing ?? {};
+              if (pos.side === 'YES') {
+                currentPrice = Number(pricing.buyYesPriceUsd ?? pricing.buyYesCost ?? 0) / 1_000_000;
+              } else {
+                currentPrice = Number(pricing.buyNoPriceUsd ?? pricing.buyNoCost ?? 0) / 1_000_000;
+              }
+
+              const closeTime = jupData.closeTime;
+              if (closeTime) {
+                const closeMs = closeTime > 1e12 ? closeTime : closeTime * 1000;
+                const msLeft = closeMs - Date.now();
+                if (msLeft > 0) {
+                  const totalMins = Math.ceil(msLeft / 60000);
+                  if (totalMins < 60) {
+                    timeLabel = `${totalMins}m`;
+                    hoursLeft = 0;
+                    daysLeft = 0;
+                  } else if (totalMins < 1440) {
+                    hoursLeft = Math.ceil(totalMins / 60);
+                    timeLabel = `${hoursLeft}h`;
+                    daysLeft = 0;
+                  } else {
+                    daysLeft = Math.ceil(totalMins / 1440);
+                    timeLabel = `${daysLeft}d`;
+                  }
+                } else {
+                  timeLabel = 'Ended';
+                }
+              }
+
+              if (jupData.title && jupData.title.length > 10) marketQuestion = jupData.title;
+              else if (jupData.question && jupData.question.length > 10) marketQuestion = jupData.question;
+            }
+          } catch (jupErr) {
+            console.error(`[positions] Jupiter fetch failed for ${pos.marketId}:`, jupErr.message);
+          }
+        }
+
+        const totalCost = Number(pos.totalCost ?? 0);
+        const contracts = Number(payload.contracts ?? (currentPrice > 0 ? Math.floor(totalCost / currentPrice) : 0));
+        const currentValue = currentPrice * contracts;
+        const pnl = pos.status === 'open'
+          ? currentValue - totalCost
+          : Number(pos.pnl ?? payload.pnl ?? 0);
+        const pnlPercent = totalCost > 0 ? (pnl / totalCost) * 100 : 0;
+
+        return {
+          ...payload,
+          id: pos.id,
+          status: pos.status,
+          marketId: pos.marketId,
+          side: pos.side,
+          entryPrice: pos.entryPrice,
+          totalCost: pos.totalCost,
+          pnl: Math.round(pnl * 100) / 100,
+          pnlPercent: Math.round(pnlPercent * 100) / 100,
+          currentPrice: Math.round(currentPrice * 1000) / 1000,
+          currentValue: Math.round(currentValue * 100) / 100,
+          contracts,
+          eventName: buildPositionEventName(marketQuestion, pos.side),
+          marketQuestion,
+          daysLeft,
+          hoursLeft,
+          timeLabel,
+          exitReason: pos.exitReason,
+          openedAt: pos.openedAt,
+          closedAt: pos.closedAt,
+          closePrice: pos.closePrice ?? payload.closePrice ?? null,
+          finalPnl: pos.pnl,
+        };
+      }),
+    );
 
     res.json({ positions: formatted, total });
   } catch (err) {

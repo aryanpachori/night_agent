@@ -84,23 +84,20 @@ async function recordAlertRow(user, market, analysis, kellyData, sentViaTelegram
   try {
     const conf = String(analysis.confidence || 'medium').toLowerCase();
 
-    // Build a human-readable market question: prefer "EventTitle — OutcomeTitle"
-    const evT  = String(market.eventTitle  || '').trim();
+    const evT = String(market.eventTitle || '').trim();
     const outT = String(market.outcomeTitle || '').trim();
-    let marketQuestion = '';
-    if (evT && outT && evT !== outT) {
-      marketQuestion = `${evT} — ${outT}`;
-    } else if (evT) {
-      marketQuestion = evT;
-    } else {
-      marketQuestion = market.question || '';
-    }
+    const title = String(market.title || '').trim();
+    const question = String(market.question || '').trim();
+    const primary = title || question || (evT && outT && evT !== outT ? `${evT} — ${outT}` : evT);
+    const validQuestion = primary.length > 10
+      ? primary
+      : `${market.category ?? 'Crypto'} market ${String(market.id ?? '').slice(0, 8) || 'event'}`;
 
     const alertRow = await prisma.alert.create({
       data: {
         userId: user.id,
         marketId: market.id,
-        marketQuestion,
+        marketQuestion: validQuestion,
         category: market.category ?? 'crypto',
         marketPrice: market.yesPrice,
         myProbability: analysis.probability,

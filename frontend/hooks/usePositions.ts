@@ -5,8 +5,9 @@ import toast from 'react-hot-toast'
 export function usePositions(status?: 'open' | 'closed' | 'resolved' | 'all') {
   return useQuery({
     queryKey: ['positions', status ?? 'all'],
-    queryFn: () => api.get('/api/positions', { params: { status } }).then((r) => r.data),
-    refetchInterval: 60 * 1000,
+    queryFn: () => api.get('/api/positions', { params: { status: status ?? 'all' } }).then((r) => r.data),
+    refetchInterval: 30_000,
+    staleTime: 15_000,
   })
 }
 

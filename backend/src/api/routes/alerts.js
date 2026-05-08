@@ -9,22 +9,26 @@ const router = express.Router();
 
 function buildEventName(question, side) {
   if (!question) return 'Market event';
+
   const q = String(question).toLowerCase();
-  const dir = side === 'YES' ? '↑ UP' : '↓ DOWN';
-  if (q.includes('bitcoin') || q.includes('btc')) return `Bitcoin ${dir}`;
-  if (q.includes('ethereum') || q.includes('eth')) return `Ethereum ${dir}`;
-  if (q.includes('solana') || q.includes('sol')) return `Solana ${dir}`;
-  if (q.includes('bnb')) return `BNB ${dir}`;
-  if (q.includes('xrp')) return `XRP ${dir}`;
-  if (q.includes('doge')) return `Dogecoin ${dir}`;
-  if (q.includes('hyper') || q.includes('hype')) return `Hyperliquid ${dir}`;
-  const cleaned = String(question)
-    .replace(/this market will resolve.*?if\s+/gi, '')
-    .replace(/the .* price at.*$/gi, '')
-    .replace(/otherwise.*$/gi, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-  return (cleaned.slice(0, 55) || String(question).slice(0, 55)) || 'Market event';
+
+  let token = 'Crypto';
+  if (q.includes('bitcoin') || q.includes('btc')) token = 'Bitcoin';
+  else if (q.includes('ethereum') || q.includes('eth')) token = 'Ethereum';
+  else if (q.includes('solana') || q.includes('sol')) token = 'Solana';
+  else if (q.includes('bnb')) token = 'BNB';
+  else if (q.includes('xrp')) token = 'XRP';
+  else if (q.includes('doge')) token = 'Dogecoin';
+  else if (q.includes('hyper') || q.includes('hype')) token = 'Hyperliquid';
+
+  let timeWindow = '';
+  const timeMatch = String(question).match(/(\d+)\s*(min|minute|hour|hr|day)/i);
+  if (timeMatch) {
+    timeWindow = ` in ${timeMatch[1]} ${timeMatch[2]}`;
+  }
+
+  const dir = side === 'YES' ? 'goes UP ↑' : 'goes DOWN ↓';
+  return `${token} ${dir}${timeWindow}`;
 }
 
 /**

@@ -3,6 +3,7 @@ export type UiOpenPosition = {
   id: string
   marketId: string
   marketQuestion: string
+  eventName: string
   category: string
   side: 'YES' | 'NO'
   contracts: number
@@ -14,6 +15,8 @@ export type UiOpenPosition = {
   pnlPercent: number
   /** null = no close time set; 0 = closes today; >0 = days remaining */
   daysLeft: number | null
+  hoursLeft: number | null
+  timeLabel: string
   status: string
 }
 
@@ -54,6 +57,7 @@ export function normalizeOpenPosition(row: Record<string, unknown>): UiOpenPosit
     id: String(row.id ?? ''),
     marketId: String(row.marketId ?? ''),
     marketQuestion: String(row.marketQuestion ?? ''),
+    eventName: String(row.eventName ?? row.marketQuestion ?? 'Market event'),
     category: String(row.category ?? 'unknown'),
     side,
     contracts,
@@ -64,6 +68,8 @@ export function normalizeOpenPosition(row: Record<string, unknown>): UiOpenPosit
     pnl,
     pnlPercent,
     daysLeft: row.daysLeft != null ? Number(row.daysLeft) : null,
+    hoursLeft: row.hoursLeft != null ? Number(row.hoursLeft) : null,
+    timeLabel: String(row.timeLabel ?? '—'),
     status: String(row.status ?? 'open'),
   }
 }

@@ -111,6 +111,18 @@ async function evaluateOpportunity(market, balance, opts = {}) {
   }
 
   const estimate = await estimateProbability(market);
+  if (
+    estimate?.confidence === 'low' &&
+    typeof estimate?.reasoning === 'string' &&
+    /LLM unavailable|quota|rate limit|API error|Using techni/i.test(estimate.reasoning)
+  ) {
+    const mathEdge = market.ta?.mathProbability != null
+      ? Math.abs(market.ta.mathProbability - market.yesPrice)
+      : null;
+    if (mathEdge != null && mathEdge > 0.15) {
+      estimate.confidence = 'medium';
+    }
+  }
   const edge = calculateEdge(estimate.probability, market.yesPrice);
   v(`[scan]   LLM edge: ${(edge * 100).toFixed(1)}% (need ≥ ${(effectiveMinEdge * 100).toFixed(1)}%)`);
 

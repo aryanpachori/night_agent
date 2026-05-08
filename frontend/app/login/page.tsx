@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { Shield, TestTube2, Clock } from 'lucide-react'
+import { Shield, TestTube2, KeyRound } from 'lucide-react'
 import { useWallet as useSolanaWallet } from '@solana/wallet-adapter-react'
 import { useWalletModal } from '@solana/wallet-adapter-react-ui'
 import toast from 'react-hot-toast'
@@ -38,45 +38,17 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(bin)
 }
 
-const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').trim()
-type LoginStep = 'phone' | 'otp' | 'success'
-
 export default function LoginPage() {
   const router = useRouter()
   const { setVisible } = useWalletModal()
   const { publicKey, signMessage, connected } = useSolanaWallet()
   const { loginWithWallet, user, isLoading } = useAuth()
-  const [step, setStep] = useState<LoginStep>('phone')
-  const [phone, setPhone] = useState('')
-  const [code, setCode] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [countdown, setCountdown] = useState(0)
 
   useEffect(() => {
     if (!isLoading && user) {
       router.replace('/dashboard')
     }
   }, [user, isLoading, router])
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    const token = params.get('token')
-    const error = params.get('error')
-    if (token) {
-      localStorage.setItem('nightagent_token', token)
-      window.history.replaceState({}, '', '/login')
-      router.push('/dashboard')
-    }
-    if (error) {
-      toast.error(error === 'expired' ? 'Login link expired' : 'Login failed')
-    }
-  }, [router])
-
-  useEffect(() => {
-    if (countdown <= 0) return
-    const timer = window.setTimeout(() => setCountdown((c) => c - 1), 1000)
-    return () => window.clearTimeout(timer)
-  }, [countdown])
 
   async function handleWalletLogin() {
     if (!publicKey || !signMessage) {
@@ -92,79 +64,6 @@ export default function LoginPage() {
     } catch {
       toast.error('Wallet sign-in failed')
     }
-  }
-
-  async function handleSendOTP() {
-    if (!phone.trim()) {
-      toast.error('Please enter your phone number')
-      return
-    }
-    setLoading(true)
-    try {
-      const res = await fetch(`${API_URL}/api/auth/send-otp`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: phone.trim() }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error)
-      setStep('otp')
-      setCountdown(60)
-      toast.success('OTP sent to your Telegram app')
-    } catch (err: unknown) {
-      toast.error((err as Error).message ?? 'Failed to send OTP')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  async function handleVerifyOTP() {
-    if (code.length < 4) {
-      toast.error('Please enter the full OTP code')
-      return
-    }
-    setLoading(true)
-    try {
-      const res = await fetch(`${API_URL}/api/auth/verify-otp`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: phone.trim(), code: code.trim() }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error)
-
-      localStorage.setItem('nightagent_token', data.token)
-      setStep('success')
-      window.setTimeout(() => router.push('/dashboard'), 1000)
-    } catch (err: unknown) {
-      toast.error((err as Error).message ?? 'Invalid OTP')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  async function handleResendOTP() {
-    if (countdown > 0) return
-    setLoading(true)
-    try {
-      const res = await fetch(`${API_URL}/api/auth/resend-otp`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: phone.trim() }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error)
-      setCountdown(60)
-      toast.success('New OTP sent')
-    } catch (err: unknown) {
-      toast.error((err as Error).message ?? 'Failed to resend')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  function handleKeyDown(e: React.KeyboardEvent, action: () => void) {
-    if (e.key === 'Enter') action()
   }
 
   return (
@@ -200,134 +99,34 @@ export default function LoginPage() {
           </div>
 
           <div className="mb-6 space-y-3">
-            {step === 'phone' && (
-              <div className="space-y-3">
-                <div>
-                  <h2 className="text-sm font-semibold text-[var(--text-primary)]">Log in with Telegram</h2>
-                  <p className="text-xs text-[var(--text-muted)]">
-                    Enter your Telegram phone number to receive a code.
-                  </p>
-                </div>
-                <input
-                  type="tel"
-                  placeholder="+91 98765 43210"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  onKeyDown={(e) => handleKeyDown(e, handleSendOTP)}
-                  className="w-full rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] px-4 py-3 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent)]/50 focus:outline-none"
-                />
-                <button
-                  type="button"
-                  onClick={() => void handleSendOTP()}
-                  disabled={loading || !phone.trim()}
-                  className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#2AABEE] py-3 text-sm font-semibold text-white transition-colors hover:bg-[#229ED9] disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {loading ? 'Sending...' : 'Send code via Telegram'}
-                </button>
-              </div>
-            )}
-
-            {step === 'otp' && (
-              <div className="space-y-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setStep('phone')
-                    setCode('')
-                  }}
-                  className="text-xs text-[var(--text-muted)] transition-colors hover:text-[var(--text-secondary)]"
-                >
-                  ← Back
-                </button>
-                <p className="text-xs text-[var(--text-muted)]">
-                  Enter the code sent in Telegram for <span className="text-[var(--text-secondary)]">{phone}</span>.
-                </p>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  maxLength={6}
-                  placeholder="12345"
-                  value={code}
-                  onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
-                  onKeyDown={(e) => handleKeyDown(e, handleVerifyOTP)}
-                  className="w-full rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] px-4 py-3 text-center font-mono text-2xl tracking-[0.45em] text-[var(--text-primary)] placeholder:tracking-normal focus:border-[var(--accent)]/50 focus:outline-none"
-                />
-                <button
-                  type="button"
-                  onClick={() => void handleVerifyOTP()}
-                  disabled={loading || code.length < 4}
-                  className="flex min-h-11 w-full items-center justify-center rounded-xl bg-[var(--accent)] py-3 text-sm font-semibold text-[var(--bg-primary)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {loading ? 'Verifying...' : 'Verify & Login'}
-                </button>
-                <div className="text-center text-xs text-[var(--text-muted)]">
-                  {countdown > 0 ? (
-                    <span>Resend code in {countdown}s</span>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => void handleResendOTP()}
-                      disabled={loading}
-                      className="text-[var(--accent)] transition-opacity hover:opacity-80 disabled:opacity-50"
-                    >
-                      Didn&apos;t get the code? Resend
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {step === 'success' && (
-              <div className="py-4 text-center">
-                <p className="text-3xl">✅</p>
-                <p className="mt-2 text-sm font-semibold text-[var(--text-primary)]">Logged in!</p>
-                <p className="text-xs text-[var(--text-muted)]">Redirecting to your dashboard...</p>
-              </div>
-            )}
-
-            {step === 'phone' && (
-              <>
-                <div className="flex items-center gap-3">
-                  <div className="h-px flex-1 bg-[var(--border)]" />
-                  <span className="text-[10px] text-[var(--text-muted)]">OR</span>
-                  <div className="h-px flex-1 bg-[var(--border)]" />
-                </div>
-
-                {!connected ? (
-                  <button
-                    type="button"
-                    onClick={() => setVisible(true)}
-                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-[var(--border-bright)] bg-[var(--bg-secondary)] px-4 py-3 text-[var(--text-primary)] transition-all hover:border-[var(--accent)]/40"
-                  >
-                    <WalletIcon className="h-5 w-5" />
-                    <span className="text-sm font-semibold">Connect Wallet</span>
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => void handleWalletLogin()}
-                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-[var(--border-bright)] bg-[var(--bg-secondary)] px-4 py-3 text-[var(--text-primary)] transition-all hover:border-[var(--accent)]/40"
-                  >
-                    <WalletIcon className="h-5 w-5" />
-                    <span className="text-sm font-semibold">Sign in with Wallet</span>
-                  </button>
-                )}
-              </>
-            )}
+            <button
+              type="button"
+              onClick={() => {
+                if (!connected) {
+                  setVisible(true)
+                  return
+                }
+                void handleWalletLogin()
+              }}
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-[var(--border-bright)] bg-[var(--bg-secondary)] px-4 py-3 text-[var(--text-primary)] transition-all hover:border-[var(--accent)]/40"
+            >
+              <WalletIcon className="h-5 w-5" />
+              <span className="text-sm font-semibold">Connect Wallet</span>
+            </button>
           </div>
 
-          {step === 'phone' && <div className="mb-5 space-y-2">
+          <div className="mb-5 space-y-2">
             {[
               { icon: Shield, text: 'No password needed' },
               { icon: TestTube2, text: 'Paper trading — no real money' },
-              { icon: Clock, text: 'Your keys never leave your wallet' },
+              { icon: KeyRound, text: 'Your keys never leave your wallet' },
             ].map(({ icon: Icon, text }) => (
               <div key={text} className="flex items-center gap-2 text-[10px] text-[var(--text-muted)]">
                 <Icon className="h-3 w-3 flex-shrink-0 text-[var(--accent-dim)]" />
                 <span>{text}</span>
               </div>
             ))}
-          </div>}
+          </div>
 
           <p className="text-center text-[12px] leading-relaxed text-[var(--text-muted)]">
             After connecting, you&apos;ll be taken directly to your dashboard with $1,000 paper USDC ready to trade. No

@@ -2,7 +2,6 @@
 
 import { useMemo, useRef, useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import Link from 'next/link'
 import toast from 'react-hot-toast'
 import { Topbar } from '@/components/layout/topbar'
 import { Card } from '@/components/ui/card'
@@ -42,6 +41,24 @@ function buildEventName(question: string, side: string): string {
     .replace(/\s+/g, ' ')
     .trim()
   return (cleaned.slice(0, 55) || question.slice(0, 55)) + (cleaned.length > 55 ? '…' : '')
+}
+
+function getDisplayReason(reason: string, confidence: string): string {
+  if (!reason) return ''
+  if (
+    reason.includes('LLM unavailable') ||
+    reason.includes('quota') ||
+    reason.includes('rate limit') ||
+    reason.includes('API error') ||
+    reason.includes('Using techni')
+  ) {
+    return confidence === 'high'
+      ? 'Strong price movement detected'
+      : confidence === 'medium'
+        ? 'Moderate signal detected'
+        : 'Price pattern detected — verify before betting'
+  }
+  return reason
 }
 
 const CONFIDENCE_LABELS: Record<string, { label: string; color: string }> = {
@@ -344,9 +361,11 @@ export default function AlertsPage() {
                     const hasActed = action !== ''
                     const isBetting = actingOn === alertId
 
-                    const eventName = buildEventName(String(alert.marketQuestion ?? ''), side)
+                    const marketQuestion = String(alert.marketQuestion ?? '')
+                    const eventName = String(alert.eventName ?? '') || buildEventName(marketQuestion, side)
                     const conf = CONFIDENCE_LABELS[confidence] ?? CONFIDENCE_LABELS.low
                     const dir = DIRECTION_LABELS[side] ?? DIRECTION_LABELS.YES
+                    const displayReason = getDisplayReason(reasoning, confidence)
 
                     return (
                       <motion.tr
@@ -361,9 +380,11 @@ export default function AlertsPage() {
 
                         {/* Event name — no category badge */}
                         <td className="px-4 py-3">
-                          <p className="max-w-[200px] truncate text-xs font-medium text-[var(--text-primary)]">
-                            {eventName}
-                          </p>
+                          <div title={marketQuestion} className="cursor-help">
+                            <p className="max-w-[300px] whitespace-nowrap overflow-hidden text-ellipsis text-xs font-medium text-[var(--text-primary)] md:max-w-none md:whitespace-normal">
+                              {eventName}
+                            </p>
+                          </div>
                         </td>
 
                         {/* Direction — plain English, no YES/NO jargon */}
@@ -391,8 +412,8 @@ export default function AlertsPage() {
 
                         {/* Reason */}
                         <td className="max-w-[200px] px-4 py-3">
-                          <Tooltip content={reasoning}>
-                            <span className="block truncate text-xs text-[var(--text-muted)]">{reasoning}</span>
+                          <Tooltip content={displayReason}>
+                            <span className="block truncate text-xs italic text-[var(--text-muted)]">{displayReason}</span>
                           </Tooltip>
                         </td>
 
@@ -416,13 +437,14 @@ export default function AlertsPage() {
                           ) : marketId ? (
                             // Not acted yet — show Bet + Skip
                             <div className="flex items-center gap-1.5">
-                              {/* "Bet →" goes to market detail page for full confirmation */}
-                              <Link
-                                href={`/dashboard/markets/${marketId}?side=${side}&amount=${stake}&alertId=${alertId}`}
-                                className="inline-flex items-center gap-1 rounded-lg border border-[var(--accent)]/40 bg-[var(--accent-glow)] px-2.5 py-1 font-mono text-[10px] font-semibold text-[var(--accent-bright)] transition-all hover:border-[var(--accent)]/70 hover:bg-[var(--accent)]/15"
+                              <button
+                                type="button"
+                                disabled={isBetting}
+                                onClick={() => void handleBet(alert)}
+                                className="inline-flex items-center gap-1 rounded-lg border border-[var(--accent)]/40 bg-[var(--accent-glow)] px-2.5 py-1 font-mono text-[10px] font-semibold text-[var(--accent-bright)] transition-all hover:border-[var(--accent)]/70 hover:bg-[var(--accent)]/15 disabled:opacity-50"
                               >
                                 Bet →
-                              </Link>
+                              </button>
                               <button
                                 type="button"
                                 disabled={isBetting}

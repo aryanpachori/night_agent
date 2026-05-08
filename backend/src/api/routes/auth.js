@@ -10,7 +10,11 @@ const { requireDb } = require('../middleware/prisma');
 const { requireAuth, getJwtSecret } = require('../middleware/auth');
 const { invalidateCache } = require('../../bot/userManager');
 const { sendWelcomeMessage } = require('../../telegram/alerts');
-const { sendOTP, verifyOTP } = require('../telegramMtproto');
+const {
+  sendVerificationCode,
+  checkVerificationCode,
+  revokeVerificationCode,
+} = require('../telegramGateway');
 
 const router = express.Router();
 
@@ -31,6 +35,19 @@ async function createToken(secret, payload) {
     .setIssuedAt()
     .setExpirationTime('30d')
     .sign(secret);
+}
+
+function otpKey(phone) {
+  return `otp_${phone}`;
+}
+
+function parseOtpRecord(raw) {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
 }
 
 // POST /api/auth/telegram
@@ -202,77 +219,102 @@ router.get('/telegram-callback', requireDb, async (req, res) => {
 // POST /api/auth/send-otp
 router.post('/send-otp', requireDb, async (req, res) => {
   try {
+    const prisma = req.prisma;
     const { phone } = req.body || {};
-    if (!phone) {
-      return res.status(400).json({ error: 'Phone number is required' });
-    }
+    if (!phone) return res.status(400).json({ error: 'Phone number required' });
 
     const normalized = phone.trim().startsWith('+') ? phone.trim() : `+${phone.trim()}`;
     const digits = normalized.replace(/[^\d]/g, '');
     if (digits.length < 8 || digits.length > 15) {
-      return res.status(400).json({ error: 'Invalid phone number format' });
+      return res.status(400).json({ error: 'Invalid phone number' });
     }
 
-    await sendOTP(normalized);
-    return res.json({ ok: true, message: 'OTP sent to your Telegram app' });
+    const { requestId } = await sendVerificationCode(normalized);
+    const value = JSON.stringify({
+      requestId,
+      phone: normalized,
+      expiresAt: Date.now() + 10 * 60 * 1000,
+    });
+    await prisma.appStorage.upsert({
+      where: { key: otpKey(normalized) },
+      update: { value },
+      create: { key: otpKey(normalized), value },
+    });
+    return res.json({ ok: true, message: 'Verification code sent to your Telegram app' });
   } catch (err) {
-    const msg = String(err?.message || '');
-    console.error('[auth/send-otp]', msg);
-    const message = msg.includes('PHONE_NUMBER_INVALID')
-      ? 'Invalid phone number. Please check and try again.'
-      : msg.includes('FLOOD_WAIT')
-        ? 'Too many attempts. Please wait a few minutes.'
-        : msg || 'Failed to send OTP';
-    return res.status(400).json({ error: message });
+    console.error('[auth/send-otp]', err.message);
+    return res.status(400).json({ error: err.message ?? 'Failed to send code' });
   }
 });
 
 // POST /api/auth/verify-otp
-router.post('/verify-otp', requireDb, async (req, res) => {
+router.post('/verify-otp', requireDb, requireAuth, async (req, res) => {
   try {
     const prisma = req.prisma;
     const { phone, code } = req.body || {};
+    const userId = req.user.userId;
     if (!phone || !code) {
       return res.status(400).json({ error: 'Phone and code are required' });
     }
 
     const normalized = phone.trim().startsWith('+') ? phone.trim() : `+${phone.trim()}`;
-    const tgUser = await verifyOTP(normalized, code);
+    const stored = await prisma.appStorage.findUnique({ where: { key: otpKey(normalized) } });
+    if (!stored) {
+      return res.status(400).json({ error: 'No pending code for this number. Please request a new one.' });
+    }
+    const storedData = parseOtpRecord(stored.value);
+    if (!storedData?.requestId || !storedData?.expiresAt) {
+      return res.status(400).json({ error: 'Invalid OTP state. Please request a new code.' });
+    }
+    if (Date.now() > Number(storedData.expiresAt)) {
+      await prisma.appStorage.delete({ where: { key: otpKey(normalized) } }).catch(() => {});
+      return res.status(400).json({ error: 'Code expired. Please request a new one.' });
+    }
 
-    const user = await prisma.user.upsert({
-      where: { telegramId: BigInt(tgUser.telegramId) },
-      update: {
-        firstName: tgUser.firstName ?? null,
-        username: tgUser.username ?? null,
-        authMethod: 'telegram',
-      },
-      create: {
-        telegramId: BigInt(tgUser.telegramId),
-        firstName: tgUser.firstName ?? null,
-        username: tgUser.username ?? null,
-        authMethod: 'telegram',
+    const { valid, telegramId } = await checkVerificationCode(storedData.requestId, code);
+    if (!valid) return res.status(400).json({ error: 'Invalid code. Please try again.' });
+    await prisma.appStorage.delete({ where: { key: otpKey(normalized) } }).catch(() => {});
+    await revokeVerificationCode(storedData.requestId);
+
+    if (!telegramId) {
+      return res.status(400).json({ error: 'Could not get Telegram ID. Please try again.' });
+    }
+
+    const existingUser = await prisma.user.findUnique({
+      where: { telegramId: BigInt(telegramId) },
+      select: { id: true },
+    });
+    if (existingUser && existingUser.id !== userId) {
+      return res.status(400).json({ error: 'This Telegram account is already linked to another NightAgent account.' });
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data: {
+        telegramId: BigInt(telegramId),
         telegramAlerts: true,
-        wallet: {
-          create: {
-            balance: 1000,
-            startingBalance: 1000,
-            brierScores: [],
-          },
-        },
+      },
+      select: {
+        id: true,
+        firstName: true,
+        username: true,
+        telegramId: true,
+        telegramAlerts: true,
       },
     });
+    invalidateCache();
 
     fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        chat_id: tgUser.telegramId,
+        chat_id: telegramId,
         text:
-          `👋 *Welcome to NightAgent, ${tgUser.firstName || 'trader'}\\!*` +
-          `\n\nYou're now logged in\\. I'll send you bet signals directly here\\.` +
-          `\n\n💰 Your paper wallet: *\\$1,000 USDC* ready to trade\\.` +
-          `\n\n_Tap below to open your dashboard_`,
-        parse_mode: 'MarkdownV2',
+          '✅ *Telegram connected to NightAgent!*\n\n' +
+          "You'll now receive bet signals directly in this chat.\n\n" +
+          "💰 Your paper wallet is ready with $1,000 USDC.\n\n" +
+          '_I\'ll alert you the next time I find a good opportunity._',
+        parse_mode: 'Markdown',
         reply_markup: {
           inline_keyboard: [[{ text: '📊 Open Dashboard', url: process.env.FRONTEND_URL }]],
         },
@@ -281,19 +323,13 @@ router.post('/verify-otp', requireDb, async (req, res) => {
       console.log('[verify-otp] Could not send welcome message:', sendErr?.message || sendErr);
     });
 
-    const secret = getJwtSecret();
-    const token = await createToken(secret, {
-      userId: user.id,
-      telegramId: tgUser.telegramId,
-    });
-
     return res.json({
-      token,
+      ok: true,
+      telegramId: telegramId.toString(),
+      message: 'Telegram connected successfully',
       user: {
-        id: user.id,
-        firstName: user.firstName,
-        username: user.username,
-        authMethod: 'telegram',
+        ...updatedUser,
+        telegramId: updatedUser.telegramId?.toString(),
       },
     });
   } catch (err) {
@@ -305,12 +341,28 @@ router.post('/verify-otp', requireDb, async (req, res) => {
 // POST /api/auth/resend-otp
 router.post('/resend-otp', requireDb, async (req, res) => {
   try {
+    const prisma = req.prisma;
     const { phone } = req.body || {};
     if (!phone) return res.status(400).json({ error: 'Phone required' });
 
     const normalized = phone.trim().startsWith('+') ? phone.trim() : `+${phone.trim()}`;
-    await sendOTP(normalized);
-    return res.json({ ok: true, message: 'New OTP sent' });
+    const existing = await prisma.appStorage.findUnique({ where: { key: otpKey(normalized) } });
+    const stored = parseOtpRecord(existing?.value);
+    if (stored?.requestId) {
+      await revokeVerificationCode(stored.requestId);
+    }
+    const { requestId } = await sendVerificationCode(normalized);
+    const value = JSON.stringify({
+      requestId,
+      phone: normalized,
+      expiresAt: Date.now() + 10 * 60 * 1000,
+    });
+    await prisma.appStorage.upsert({
+      where: { key: otpKey(normalized) },
+      update: { value },
+      create: { key: otpKey(normalized), value },
+    });
+    return res.json({ ok: true, message: 'New code sent' });
   } catch (err) {
     return res.status(400).json({ error: err?.message || 'Failed to resend OTP' });
   }

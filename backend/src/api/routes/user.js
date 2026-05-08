@@ -4,6 +4,7 @@ const express = require('express');
 const { requireDb } = require('../middleware/prisma');
 const { requireAuth } = require('../middleware/auth');
 const { invalidateCache } = require('../../bot/userManager');
+const { sendOTP, verifyOTP } = require('../telegramMtproto');
 
 const router = express.Router();
 
@@ -141,6 +142,104 @@ router.post('/test-telegram', requireDb, requireAuth, async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     console.error('[user/test-telegram]', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.post('/telegram/send-otp', requireDb, requireAuth, async (req, res) => {
+  try {
+    const { phone } = req.body || {};
+    if (!phone) return res.status(400).json({ error: 'Phone number is required' });
+
+    const normalized = phone.trim().startsWith('+') ? phone.trim() : `+${phone.trim()}`;
+    const digits = normalized.replace(/[^\d]/g, '');
+    if (digits.length < 8 || digits.length > 15) {
+      return res.status(400).json({ error: 'Invalid phone number format' });
+    }
+
+    await sendOTP(normalized);
+    res.json({ ok: true, message: 'OTP sent to your Telegram app' });
+  } catch (err) {
+    const msg = String(err?.message || '');
+    console.error('[user/telegram/send-otp]', msg);
+    const message = msg.includes('PHONE_NUMBER_INVALID')
+      ? 'Invalid phone number. Please check and try again.'
+      : msg.includes('FLOOD_WAIT')
+        ? 'Too many attempts. Please wait a few minutes.'
+        : msg || 'Failed to send OTP';
+    res.status(400).json({ error: message });
+  }
+});
+
+router.post('/telegram/resend-otp', requireDb, requireAuth, async (req, res) => {
+  try {
+    const { phone } = req.body || {};
+    if (!phone) return res.status(400).json({ error: 'Phone number is required' });
+
+    const normalized = phone.trim().startsWith('+') ? phone.trim() : `+${phone.trim()}`;
+    await sendOTP(normalized);
+    res.json({ ok: true, message: 'New OTP sent' });
+  } catch (err) {
+    const msg = String(err?.message || '');
+    console.error('[user/telegram/resend-otp]', msg);
+    res.status(400).json({ error: msg || 'Failed to resend OTP' });
+  }
+});
+
+router.post('/telegram/verify-otp', requireDb, requireAuth, async (req, res) => {
+  try {
+    const { phone, code } = req.body || {};
+    if (!phone || !code) {
+      return res.status(400).json({ error: 'Phone and code are required' });
+    }
+
+    const normalized = phone.trim().startsWith('+') ? phone.trim() : `+${phone.trim()}`;
+    const tgUser = await verifyOTP(normalized, code);
+    const telegramId = BigInt(tgUser.telegramId);
+
+    const existingOwner = await req.prisma.user.findUnique({
+      where: { telegramId },
+      select: { id: true },
+    });
+    if (existingOwner && existingOwner.id !== req.user.userId) {
+      return res.status(409).json({ error: 'This Telegram account is already linked to another user' });
+    }
+
+    const updated = await req.prisma.user.update({
+      where: { id: req.user.userId },
+      data: {
+        telegramId,
+        firstName: tgUser.firstName ?? undefined,
+        username: tgUser.username ?? undefined,
+        telegramAlerts: true,
+      },
+      select: { telegramId: true, username: true, telegramAlerts: true },
+    });
+    invalidateCache();
+
+    res.json({
+      ok: true,
+      telegramId: updated.telegramId?.toString() ?? null,
+      username: updated.username ?? null,
+      telegramAlerts: !!updated.telegramAlerts,
+    });
+  } catch (err) {
+    const msg = String(err?.message || '');
+    console.error('[user/telegram/verify-otp]', msg);
+    res.status(400).json({ error: msg || 'Verification failed' });
+  }
+});
+
+router.post('/telegram/disconnect', requireDb, requireAuth, async (req, res) => {
+  try {
+    await req.prisma.user.update({
+      where: { id: req.user.userId },
+      data: { telegramId: null, telegramAlerts: false },
+    });
+    invalidateCache();
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[user/telegram/disconnect]', err);
     res.status(500).json({ error: 'Server error' });
   }
 });

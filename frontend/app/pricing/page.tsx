@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { Suspense, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import toast from 'react-hot-toast'
@@ -11,7 +11,7 @@ import { api } from '@/lib/api'
 
 const PLAN_ID = 'pro_monthly'
 
-export default function PricingPage() {
+function PricingContent() {
   const { user, refetchUser } = useAuth()
   const searchParams = useSearchParams()
   const [checkingOut, setCheckingOut] = useState(false)
@@ -143,5 +143,21 @@ export default function PricingPage() {
         </div>
       </Card>
     </main>
+  )
+}
+
+export default function PricingPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="mx-auto min-h-screen w-full max-w-3xl px-4 py-10">
+          <Card className="p-6">
+            <p className="text-sm text-[var(--text-muted)]">Loading pricing...</p>
+          </Card>
+        </main>
+      }
+    >
+      <PricingContent />
+    </Suspense>
   )
 }

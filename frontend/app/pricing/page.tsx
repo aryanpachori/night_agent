@@ -1,7 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import toast from 'react-hot-toast'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -11,11 +12,48 @@ import { api } from '@/lib/api'
 const PLAN_ID = 'pro_monthly'
 
 export default function PricingPage() {
-  const { user } = useAuth()
+  const { user, refetchUser } = useAuth()
+  const searchParams = useSearchParams()
   const [checkingOut, setCheckingOut] = useState(false)
   const [openingManage, setOpeningManage] = useState(false)
+  const [confirmingReturn, setConfirmingReturn] = useState(false)
+  const processedReturnRef = useRef<string | null>(null)
 
   const isPro = String(user?.planTier || 'free').toLowerCase() === 'pro'
+
+  useEffect(() => {
+    const source = searchParams.get('source')
+    if (source !== 'dodo' || confirmingReturn) return
+
+    const status = searchParams.get('status') || ''
+    const subscriptionId = searchParams.get('subscription_id') || ''
+    const paymentId = searchParams.get('payment_id') || ''
+    if (!status && !subscriptionId && !paymentId) return
+    const returnKey = `${status}:${subscriptionId}:${paymentId}`
+    if (processedReturnRef.current === returnKey) return
+
+    processedReturnRef.current = returnKey
+    setConfirmingReturn(true)
+    void api
+      .post('/api/subscriptions/confirm-return', {
+        status,
+        subscriptionId,
+        paymentId,
+      })
+      .then(async (res) => {
+        if (String(res.data?.planTier || '').toLowerCase() === 'pro') {
+          await refetchUser()
+          toast.success('Payment confirmed! Your Pro plan is now active.')
+        } else {
+          toast('Payment received. Subscription activation is processing.', { icon: '⏳' })
+        }
+      })
+      .catch((err: unknown) => {
+        const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+        toast.error(msg || 'Payment return received, but activation could not be confirmed yet.')
+      })
+      .finally(() => setConfirmingReturn(false))
+  }, [searchParams, confirmingReturn, refetchUser])
 
   const handleCheckout = async () => {
     if (!user) {

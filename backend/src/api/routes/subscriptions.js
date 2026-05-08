@@ -34,14 +34,61 @@ function parseIsoDate(value) {
 function isValidWebhook(req) {
   const secret = process.env.DODO_WEBHOOK_SECRET;
   if (!secret) return true; // Allow test mode without secret during local dev.
-  const provided = String(req.headers['x-dodo-signature'] || '');
-  if (!provided) return false;
+  const normalizedSecret = String(secret).trim();
+
+  const secretKeyForHmac = (() => {
+    // Svix/Dodo secrets are often formatted as: whsec_<base64>
+    if (normalizedSecret.startsWith('whsec_')) {
+      const b64 = normalizedSecret.slice('whsec_'.length);
+      try {
+        return Buffer.from(b64, 'base64');
+      } catch {
+        return Buffer.from(normalizedSecret, 'utf8');
+      }
+    }
+    return Buffer.from(normalizedSecret, 'utf8');
+  })();
+
   const payload = JSON.stringify(req.body || {});
-  const expected = crypto.createHmac('sha256', secret).update(payload).digest('hex');
-  const expectedBuf = Buffer.from(expected);
-  const providedBuf = Buffer.from(provided);
-  if (expectedBuf.length !== providedBuf.length) return false;
-  return crypto.timingSafeEqual(expectedBuf, providedBuf);
+
+  // Format A: legacy x-dodo-signature = hex(hmac_sha256(payload))
+  const legacySignature = String(req.headers['x-dodo-signature'] || '');
+  if (legacySignature) {
+    const expected = crypto.createHmac('sha256', secretKeyForHmac).update(payload).digest('hex');
+    const expectedBuf = Buffer.from(expected);
+    const providedBuf = Buffer.from(legacySignature);
+    if (expectedBuf.length === providedBuf.length && crypto.timingSafeEqual(expectedBuf, providedBuf)) {
+      return true;
+    }
+  }
+
+  // Format B: Svix-style headers (webhook-id, webhook-timestamp, webhook-signature)
+  const webhookId = String(req.headers['webhook-id'] || '');
+  const webhookTimestamp = String(req.headers['webhook-timestamp'] || '');
+  const webhookSignatureHeader = String(req.headers['webhook-signature'] || '');
+  if (webhookId && webhookTimestamp && webhookSignatureHeader) {
+    const signedContent = `${webhookId}.${webhookTimestamp}.${payload}`;
+    const expectedBase64 = crypto
+      .createHmac('sha256', secretKeyForHmac)
+      .update(signedContent)
+      .digest('base64');
+    const signatures = webhookSignatureHeader
+      .split(' ')
+      .flatMap(part => part.split(','))
+      .map(s => s.trim())
+      .filter(Boolean)
+      .map(s => (s.startsWith('v1,') ? s.slice(3) : s));
+
+    for (const sig of signatures) {
+      const expectedBuf = Buffer.from(expectedBase64);
+      const providedBuf = Buffer.from(sig);
+      if (expectedBuf.length === providedBuf.length && crypto.timingSafeEqual(expectedBuf, providedBuf)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 function dodoBaseUrl() {
@@ -96,6 +143,43 @@ async function createDodoCheckoutSession({ userId, email, name }) {
   return session;
 }
 
+async function fetchDodoJson(pathname) {
+  const apiKey = process.env.DODO_PAYMENTS_API_KEY;
+  if (!apiKey) throw new Error('DODO_PAYMENTS_API_KEY is not configured');
+  const response = await fetch(`${dodoBaseUrl()}${pathname}`, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+  });
+  if (!response.ok) {
+    const errBody = await response.text().catch(() => '');
+    throw new Error(`Dodo API failed (${response.status}): ${errBody}`);
+  }
+  return response.json();
+}
+
+async function findUserIdFromWebhook(prisma, payload, metadata) {
+  const directUserId = metadata.userId || metadata.user_id || payload.client_reference_id || payload.customer_reference;
+  if (directUserId) return String(directUserId);
+
+  const checkoutSessionId = payload.checkout_session_id || payload.checkoutSessionId || payload.session_id || payload.sessionId;
+  if (checkoutSessionId) {
+    const row = await prisma.appStorage.findUnique({
+      where: { key: `dodo_checkout_session:${checkoutSessionId}` },
+    });
+    if (row?.value) return row.value;
+  }
+
+  const dodoSubscriptionId = payload.subscription_id || payload.subscriptionId;
+  if (dodoSubscriptionId) {
+    const user = await prisma.user.findFirst({
+      where: { dodoSubscriptionId: String(dodoSubscriptionId) },
+      select: { id: true },
+    });
+    if (user?.id) return user.id;
+  }
+
+  return null;
+}
+
 router.get('/status', requireDb, requireAuth, async (req, res) => {
   try {
     const user = await req.prisma.user.findUnique({
@@ -143,6 +227,13 @@ router.post('/checkout', requireDb, requireAuth, async (req, res) => {
       email: fallbackEmail,
       name: fallbackName,
     });
+    if (session?.session_id) {
+      await req.prisma.appStorage.upsert({
+        where: { key: `dodo_checkout_session:${session.session_id}` },
+        update: { value: String(req.user.userId) },
+        create: { key: `dodo_checkout_session:${session.session_id}`, value: String(req.user.userId) },
+      });
+    }
 
     if (!session.checkout_url) {
       return res.status(500).json({ error: 'Unable to generate checkout URL' });
@@ -182,7 +273,7 @@ router.post('/webhook', requireDb, async (req, res) => {
     const eventType = String(req.body?.type || req.body?.event_type || '').toLowerCase();
     const payload = req.body?.data || req.body || {};
     const metadata = payload.metadata || req.body?.metadata || {};
-    const userId = metadata.userId || metadata.user_id || payload.client_reference_id || payload.customer_reference;
+    const userId = await findUserIdFromWebhook(req.prisma, payload, metadata);
     if (!userId) return res.status(400).json({ error: 'Missing user reference in webhook payload' });
 
     const planTier = normalizePlanTier(payload.plan_tier || payload.plan || payload.tier || '');
@@ -194,7 +285,8 @@ router.post('/webhook', requireDb, async (req, res) => {
       planTier === PRO_TIER ||
       eventType.includes('subscription.active') ||
       eventType.includes('subscription.created') ||
-      eventType.includes('subscription.renewed');
+      eventType.includes('subscription.renewed') ||
+      (eventType === 'payment.succeeded' && String(metadata.planId || payload.plan_id || '') === PRO_PLAN_ID);
 
     const updateData = {
       planTier: shouldActivatePro ? PRO_TIER : FREE_TIER,
@@ -218,6 +310,59 @@ router.post('/webhook', requireDb, async (req, res) => {
   } catch (err) {
     console.error('[subscriptions/webhook]', err);
     return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.post('/confirm-return', requireDb, requireAuth, async (req, res) => {
+  try {
+    const subscriptionId = String(req.body?.subscriptionId || '').trim();
+    const statusHint = String(req.body?.status || '').toLowerCase();
+    const paymentId = String(req.body?.paymentId || '').trim();
+
+    let active = false;
+    let currentPeriodEnd = null;
+    let dodoCustomerId = null;
+    let dodoSubscriptionId = null;
+
+    if (subscriptionId) {
+      const raw = await fetchDodoJson(`/subscriptions/${subscriptionId}`);
+      const sub = raw?.data || raw?.subscription || raw;
+      const status = String(sub?.status || '').toLowerCase();
+      active = status === 'active' || status === 'trialing';
+      currentPeriodEnd = parseIsoDate(
+        sub?.current_period_end || sub?.currentPeriodEnd || sub?.next_billing_date || sub?.nextBillingDate,
+      );
+      dodoCustomerId = sub?.customer_id || sub?.customerId || null;
+      dodoSubscriptionId = sub?.subscription_id || sub?.subscriptionId || subscriptionId;
+    } else if (statusHint === 'active' || statusHint === 'succeeded') {
+      active = true;
+    }
+
+    if (!active && statusHint === 'active') active = true;
+
+    await req.prisma.user.update({
+      where: { id: String(req.user.userId) },
+      data: {
+        planTier: active ? PRO_TIER : FREE_TIER,
+        planStatus: active ? 'active' : 'inactive',
+        subscriptionCurrentPeriodEnd: currentPeriodEnd,
+        dodoCustomerId,
+        dodoSubscriptionId,
+        maxAlertsPerDay: active ? 30 : undefined,
+        alertIntervalMin: active ? 2 : undefined,
+      },
+    });
+    invalidateCache();
+    return res.json({
+      ok: true,
+      planTier: active ? PRO_TIER : FREE_TIER,
+      planStatus: active ? 'active' : 'inactive',
+      paymentId: paymentId || null,
+      subscriptionId: subscriptionId || dodoSubscriptionId || null,
+    });
+  } catch (err) {
+    console.error('[subscriptions/confirm-return]', err);
+    return res.status(500).json({ error: err.message || 'Server error' });
   }
 });
 

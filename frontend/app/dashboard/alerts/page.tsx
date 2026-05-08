@@ -6,14 +6,13 @@ import toast from 'react-hot-toast'
 import { Topbar } from '@/components/layout/topbar'
 import { Card } from '@/components/ui/card'
 import { Toggle } from '@/components/ui/toggle'
-import { Tabs } from '@/components/ui/tabs'
 import { formatUSD, formatTimeAgo } from '@/lib/utils'
 import { Tooltip } from '@/components/ui/tooltip'
 import { staggerContainer, tableRow } from '@/lib/animations'
 import { useAuth, useUpdateSettings } from '@/hooks/useAuth'
 import { useAlerts, useAlertStream, useRecordAlertAction } from '@/hooks/useAlerts'
-import { usePlaceBet } from '@/hooks/usePositions'
 import { useQueryClient } from '@tanstack/react-query'
+import { BetModal } from '@/components/alerts/BetModal'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -62,9 +61,9 @@ function getDisplayReason(reason: string, confidence: string): string {
 }
 
 const CONFIDENCE_LABELS: Record<string, { label: string; color: string }> = {
-  high:   { label: '✅ Strong signal',   color: 'text-[var(--success)]' },
+  high:   { label: '✅ High confidence',   color: 'text-[var(--success)]' },
   medium: { label: '⚡ Moderate signal', color: 'text-[var(--warning)]' },
-  low:    { label: '⚠️ Weak signal',     color: 'text-[var(--text-muted)]' },
+  low:    { label: '⚠️ Lower confidence',     color: 'text-[var(--text-muted)]' },
 }
 
 const DIRECTION_LABELS: Record<string, { label: string; color: string }> = {
@@ -77,17 +76,16 @@ export default function AlertsPage() {
   const qc = useQueryClient()
   const updateSettings = useUpdateSettings()
   const recordAction = useRecordAlertAction()
-  const placeBet = usePlaceBet()
 
   const [maxAlerts, setMaxAlerts] = useState(10)
   const [minTime, setMinTime] = useState('5min')
   const [telegramOn, setTelegramOn] = useState(true)
   const [webNotif, setWebNotif] = useState(false)
-  const [filterTab, setFilterTab] = useState('all')
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default')
   const [actingOn, setActingOn] = useState<string | null>(null)
+  const [bettingAlert, setBettingAlert] = useState<Record<string, unknown> | null>(null)
 
-  const { data: alertsPayload } = useAlerts('all', 50)
+  const { data: alertsPayload } = useAlerts('pending', 50)
   const prevAlertCountRef = useRef<number | null>(null)
   useAlertStream(true)
 
@@ -145,72 +143,17 @@ export default function AlertsPage() {
     }
   }
 
-  /** Inline BET from the alert row (no navigation needed if user just wants to act) */
-  const handleBet = async (alert: Record<string, unknown>) => {
-    const alertId = String(alert.id ?? '')
-    const marketId = String(alert.marketId ?? '')
-    const side: 'YES' | 'NO' = alert.side === 'NO' ? 'NO' : 'YES'
-    const stake = Number(alert.suggestedAmount ?? 50)
-    const marketQuestion = String(alert.marketQuestion ?? '')
-    const category = String(alert.category ?? '')
-    const marketPrice = Number(alert.marketPrice ?? 0.5)
-
-    if (!marketId || stake < 1) return
-    setActingOn(alertId)
-    try {
-      const result = await placeBet.mutateAsync({
-        marketId,
-        marketQuestion,
-        category,
-        side,
-        entryPrice: marketPrice,
-        amount: stake,
-      }) as { position?: { id?: string } }
-
-      await recordAction.mutateAsync({
-        id: alertId,
-        actionTaken: 'bet_full',
-        positionId: result?.position?.id,
-      })
-
-      qc.invalidateQueries({ queryKey: ['alerts'] })
-      qc.invalidateQueries({ queryKey: ['positions'] })
-      qc.invalidateQueries({ queryKey: ['wallet'] })
-      toast.success(`Bet placed — $${stake.toFixed(0)} on ${side}`)
-    } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Failed to place bet'
-      toast.error(msg)
-    } finally {
-      setActingOn(null)
-    }
+  const handleBet = (alert: Record<string, unknown>) => {
+    setBettingAlert(alert)
   }
 
   const alerts = (alertsPayload?.alerts ?? []) as Array<Record<string, unknown>>
 
-  const filtered = useMemo(() => {
-    return alerts.filter((a) => {
-      const action = String(a.actionTaken ?? '')
-      if (filterTab === 'acted') return action === 'bet_full' || action === 'bet_half'
-      if (filterTab === 'passed') return action === 'skipped' || action === 'expired'
-      return true
-    })
-  }, [alerts, filterTab])
-
-  const tabCounts = useMemo(() => {
-    const acted = alerts.filter((a) => {
-      const x = String(a.actionTaken ?? '')
-      return x === 'bet_full' || x === 'bet_half'
-    }).length
-    const passed = alerts.filter((a) => {
-      const x = String(a.actionTaken ?? '')
-      return x === 'skipped' || x === 'expired'
-    }).length
-    return { all: alerts.length, acted, passed }
-  }, [alerts])
+  const filtered = useMemo(() => alerts.filter((a) => Boolean(a.isActionable)), [alerts])
 
   return (
     <div className="flex flex-1 flex-col">
-      <Topbar title="Alerts" subtitle="Bot signals and notification settings" />
+      <Topbar title="Live Alerts" subtitle="Fresh signals you can still act on" />
 
       <div className="space-y-5 p-4 pb-6 sm:p-6">
         {/* ── Settings card ─────────────────────────────────────────────── */}
@@ -320,17 +263,10 @@ export default function AlertsPage() {
         >
           <Card className="overflow-hidden">
             <div className="flex flex-col gap-3 border-b border-[var(--border)] p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
-              <h3 className="text-sm font-semibold text-[var(--text-primary)]">Signal History</h3>
-              <Tabs
-                className="w-full max-w-full sm:w-auto"
-                tabs={[
-                  { id: 'all',    label: 'All',     count: tabCounts.all },
-                  { id: 'acted',  label: 'I Bet',   count: tabCounts.acted },
-                  { id: 'passed', label: 'Skipped', count: tabCounts.passed },
-                ]}
-                active={filterTab}
-                onChange={setFilterTab}
-              />
+              <h3 className="text-sm font-semibold text-[var(--text-primary)]">Live Alerts</h3>
+              <span className="inline-flex items-center rounded-full border border-[var(--accent)]/30 bg-[var(--accent-glow)] px-2.5 py-1 text-xs font-medium text-[var(--accent-bright)]">
+                Live Alerts: {filtered.length}
+              </span>
             </div>
 
             <div className="overflow-x-auto overscroll-x-contain">
@@ -347,7 +283,7 @@ export default function AlertsPage() {
                     ))}
                   </tr>
                 </thead>
-                <motion.tbody variants={staggerContainer} initial="hidden" animate="visible" key={filterTab}>
+                <motion.tbody variants={staggerContainer} initial="hidden" animate="visible">
                   {filtered.map((alert) => {
                     const confidence = String(alert.confidence ?? 'medium')
                     const reasoning = String(alert.reasoning ?? '')
@@ -357,9 +293,8 @@ export default function AlertsPage() {
                     const createdAt = alert.createdAt ? new Date(String(alert.createdAt)) : new Date()
                     const stake = Math.round(Number(alert.suggestedAmount ?? 50))
                     const winAmount = Math.round(Number(alert.suggestedContracts ?? 0))
-                    const action = String(alert.actionTaken ?? '')
-                    const hasActed = action !== ''
                     const isBetting = actingOn === alertId
+                    const isActionable = Boolean(alert.isActionable)
 
                     const marketQuestion = String(alert.marketQuestion ?? '')
                     const eventName = String(alert.eventName ?? '') || buildEventName(marketQuestion, side)
@@ -417,30 +352,14 @@ export default function AlertsPage() {
                           </Tooltip>
                         </td>
 
-                        {/* Action column — conditional on actionTaken */}
+                        {/* Action column — only actionable alerts can be acted on */}
                         <td className="px-4 py-3">
-                          {hasActed ? (
-                            // Show what was done — read only
-                            <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${
-                              action === 'bet_full' || action === 'bet_half'
-                                ? 'border-[var(--success)]/30 bg-[var(--success-dim)] text-[var(--success)]'
-                                : action === 'skipped'
-                                  ? 'border-[var(--border)] bg-[var(--bg-secondary)] text-[var(--text-muted)]'
-                                  : 'border-[var(--border)] bg-[var(--bg-secondary)] text-[var(--text-muted)]'
-                            }`}>
-                              {action === 'bet_full' || action === 'bet_half'
-                                ? `✅ Bet $${stake}`
-                                : action === 'skipped'
-                                  ? '⏭ Skipped'
-                                  : '⏰ Expired'}
-                            </span>
-                          ) : marketId ? (
-                            // Not acted yet — show Bet + Skip
+                          {isActionable && marketId ? (
                             <div className="flex items-center gap-1.5">
                               <button
                                 type="button"
                                 disabled={isBetting}
-                                onClick={() => void handleBet(alert)}
+                                onClick={() => handleBet(alert)}
                                 className="inline-flex items-center gap-1 rounded-lg border border-[var(--accent)]/40 bg-[var(--accent-glow)] px-2.5 py-1 font-mono text-[10px] font-semibold text-[var(--accent-bright)] transition-all hover:border-[var(--accent)]/70 hover:bg-[var(--accent)]/15 disabled:opacity-50"
                               >
                                 Bet →
@@ -462,11 +381,7 @@ export default function AlertsPage() {
                   {filtered.length === 0 && (
                     <tr>
                       <td colSpan={7} className="px-4 py-10 text-center text-xs text-[var(--text-muted)]">
-                        {filterTab === 'all'
-                          ? 'No alerts yet — the bot scans every 2 min.'
-                          : filterTab === 'acted'
-                            ? 'No bets placed yet.'
-                            : 'No skipped signals.'}
+                        No live alerts right now.
                       </td>
                     </tr>
                   )}
@@ -476,6 +391,25 @@ export default function AlertsPage() {
           </Card>
         </motion.div>
       </div>
+      <BetModal
+        alert={
+          bettingAlert
+            ? {
+                id: String(bettingAlert.id ?? ''),
+                marketId: String(bettingAlert.marketId ?? ''),
+                marketQuestion: String(bettingAlert.marketQuestion ?? ''),
+                category: String(bettingAlert.category ?? ''),
+                side: bettingAlert.side === 'NO' ? 'NO' : 'YES',
+                marketPrice: Number(bettingAlert.marketPrice ?? 0.5),
+                aiConfidencePct: Number(bettingAlert.aiConfidencePct ?? 50),
+                eventName: String(bettingAlert.eventName ?? ''),
+                betAmountUsd: Number(bettingAlert.betAmountUsd ?? bettingAlert.suggestedAmount ?? 10),
+              }
+            : null
+        }
+        onClose={() => setBettingAlert(null)}
+        onSuccess={() => setBettingAlert(null)}
+      />
     </div>
   )
 }

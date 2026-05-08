@@ -22,9 +22,6 @@ async function requireAuth(req, res, next) {
     } else if (cookieHeader) {
       const match = cookieHeader.match(/nightagent_token=([^;]+)/);
       if (match) token = decodeURIComponent(match[1].trim());
-    } else if (req.query?.token) {
-      // Fallback for EventSource (SSE) which cannot set Authorization headers
-      token = String(req.query.token);
     }
 
     if (!token) return res.status(401).json({ error: 'Unauthorized' });

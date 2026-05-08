@@ -1,7 +1,7 @@
 'use client'
 
 import { motion } from 'framer-motion'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Wallet, TrendingUp, Target, Bell } from 'lucide-react'
 import { Topbar } from '@/components/layout/topbar'
 import { StatCard } from '@/components/dashboard/stat-card'
@@ -10,6 +10,7 @@ import { BotStatusPanel } from '@/components/dashboard/bot-status-panel'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import DashboardSkeleton from '@/app/dashboard/loading'
+import { BetModal } from '@/components/alerts/BetModal'
 
 import { useSummaryStats, useBotStatus } from '@/hooks/useStats'
 import { useWalletHistory } from '@/hooks/useWallet'
@@ -19,6 +20,7 @@ import { usePauseBot } from '@/hooks/useAuth'
 import { useAuth } from '@/hooks/useAuth'
 import { normalizeOpenPosition, type UiOpenPosition } from '@/lib/normalize-position'
 import { formatUSD, formatPct, formatTimeAgo } from '@/lib/utils'
+import { getDirectionLabel } from '@/lib/beginner-language'
 import Link from 'next/link'
 
 const fadeUp = {
@@ -75,17 +77,7 @@ function StartBotBanner({ userId }: { userId: string }) {
 
 export default function DashboardPage() {
   const { user } = useAuth()
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-
-    const params = new URLSearchParams(window.location.search)
-    const token = params.get('token')
-    if (!token) return
-
-    localStorage.setItem('nightagent_token', token)
-    window.history.replaceState({}, '', '/dashboard')
-    window.location.reload()
-  }, [])
+  const [bettingAlert, setBettingAlert] = useState<Record<string, unknown> | null>(null)
 
   const { data: stats, isLoading: statsLoading } = useSummaryStats()
   const { data: walletHistory } = useWalletHistory()
@@ -285,15 +277,14 @@ export default function DashboardPage() {
                 const profit = winAmount - stake
                 // Use pre-computed eventName from API, or fallback
                 const eventName = String(alert.eventName ?? alert.marketQuestion ?? 'Market event')
-                const dir = side === 'YES' ? '↑ UP' : '↓ DOWN'
-                const dirColor = side === 'YES' ? 'text-[var(--success)]' : 'text-[var(--danger)]'
+                const direction = getDirectionLabel(side)
                 return (
                   <div key={alertId} className="flex items-start gap-3 rounded-lg bg-[var(--bg-secondary)] p-3">
                     <div className={`mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full ${isBet ? 'bg-[var(--success)]' : hasActed ? 'bg-[var(--text-muted)]' : 'bg-[var(--accent)]'}`} />
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-xs font-medium text-[var(--text-primary)]">{eventName}</p>
                       <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
-                        <span className={`text-[10px] font-semibold ${dirColor}`}>{dir}</span>
+                        <span className={`text-[10px] font-semibold ${direction.color}`}>{direction.label}</span>
                         {profit > 0 && (
                           <span className="font-mono text-[10px] text-[var(--text-secondary)]">
                             ${stake} → win +${profit}
@@ -312,24 +303,44 @@ export default function DashboardPage() {
                           {isBet ? '✅ Bet' : '⏭ Skipped'}
                         </span>
                       ) : marketId ? (
-                        <Link
-                          href={`/dashboard/markets/${marketId}?side=${side}&amount=${stake}&alertId=${alertId}`}
+                        <button
+                          type="button"
+                          onClick={() => setBettingAlert(alert)}
                           className="rounded border border-[var(--accent)]/40 bg-[var(--accent-glow)] px-2 py-0.5 font-mono text-[9px] font-semibold text-[var(--accent-bright)] transition-all hover:border-[var(--accent)]/70"
                         >
                           Bet →
-                        </Link>
+                        </button>
                       ) : null}
                     </div>
                   </div>
                 )
               })}
               {(alertsData?.alerts ?? []).length === 0 && (
-                <p className="text-xs text-[var(--text-muted)]">No alerts yet — bot scans every 2 min.</p>
+                <p className="text-xs text-[var(--text-muted)]">No alerts yet — the bot is scanning now.</p>
               )}
             </div>
           </Card>
         </motion.div>
       </div>
+      <BetModal
+        alert={
+          bettingAlert
+            ? {
+                id: String(bettingAlert.id ?? ''),
+                marketId: String(bettingAlert.marketId ?? ''),
+                marketQuestion: String(bettingAlert.marketQuestion ?? ''),
+                category: String(bettingAlert.category ?? ''),
+                side: bettingAlert.side === 'NO' ? 'NO' : 'YES',
+                marketPrice: Number(bettingAlert.marketPrice ?? 0.5),
+                aiConfidencePct: Number(bettingAlert.aiConfidencePct ?? 50),
+                eventName: String(bettingAlert.eventName ?? ''),
+                betAmountUsd: Number(bettingAlert.betAmountUsd ?? bettingAlert.suggestedAmount ?? 10),
+              }
+            : null
+        }
+        onClose={() => setBettingAlert(null)}
+        onSuccess={() => setBettingAlert(null)}
+      />
     </div>
   )
 }

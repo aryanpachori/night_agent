@@ -5,14 +5,14 @@ import { motion } from 'framer-motion'
 import toast from 'react-hot-toast'
 import { Topbar } from '@/components/layout/topbar'
 import { Card } from '@/components/ui/card'
-import { Toggle } from '@/components/ui/toggle'
 import { formatUSD, formatTimeAgo } from '@/lib/utils'
 import { Tooltip } from '@/components/ui/tooltip'
 import { staggerContainer, tableRow } from '@/lib/animations'
-import { useAuth, useUpdateSettings } from '@/hooks/useAuth'
 import { useAlerts, useAlertStream, useRecordAlertAction } from '@/hooks/useAlerts'
 import { useQueryClient } from '@tanstack/react-query'
 import { BetModal } from '@/components/alerts/BetModal'
+import Link from 'next/link'
+import { getConfidenceLabel } from '@/lib/beginner-language'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -60,28 +60,14 @@ function getDisplayReason(reason: string, confidence: string): string {
   return reason
 }
 
-const CONFIDENCE_LABELS: Record<string, { label: string; color: string }> = {
-  high:   { label: '✅ High confidence',   color: 'text-[var(--success)]' },
-  medium: { label: '⚡ Moderate signal', color: 'text-[var(--warning)]' },
-  low:    { label: '⚠️ Lower confidence',     color: 'text-[var(--text-muted)]' },
-}
-
 const DIRECTION_LABELS: Record<string, { label: string; color: string }> = {
   YES: { label: '↑ Going UP',   color: 'text-[var(--success)]' },
   NO:  { label: '↓ Going DOWN', color: 'text-[var(--danger)]' },
 }
 
 export default function AlertsPage() {
-  const { user, refetchUser } = useAuth()
   const qc = useQueryClient()
-  const updateSettings = useUpdateSettings()
   const recordAction = useRecordAlertAction()
-
-  const [maxAlerts, setMaxAlerts] = useState(10)
-  const [minTime, setMinTime] = useState('5min')
-  const [telegramOn, setTelegramOn] = useState(true)
-  const [webNotif, setWebNotif] = useState(false)
-  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default')
   const [actingOn, setActingOn] = useState<string | null>(null)
   const [bettingAlert, setBettingAlert] = useState<Record<string, unknown> | null>(null)
 
@@ -90,44 +76,9 @@ export default function AlertsPage() {
   useAlertStream(true)
 
   useEffect(() => {
-    if (!user) return
-    setMaxAlerts(user.maxAlertsPerDay ?? 10)
-    const aim = user.alertIntervalMin ?? 5
-    setMinTime(aim <= 5 ? '5min' : aim <= 15 ? '15min' : aim <= 30 ? '30min' : '1hr')
-    setTelegramOn(user.telegramAlerts ?? false)
-  }, [user])
-
-  useEffect(() => {
-    if (typeof window === 'undefined' || typeof Notification === 'undefined') return
-    const perm = Notification.permission
-    setNotificationPermission(perm)
-    if (perm === 'granted') setWebNotif(true)
-  }, [])
-
-  useEffect(() => {
     const count = (alertsPayload?.alerts ?? []).length
     prevAlertCountRef.current = count
   }, [alertsPayload])
-
-  const handleWebNotif = async (next: boolean) => {
-    if (typeof window === 'undefined') return
-    if (!next) { setWebNotif(false); return }
-    if (typeof Notification === 'undefined') return
-    let permission = Notification.permission
-    if (permission === 'default') permission = await Notification.requestPermission()
-    setNotificationPermission(permission)
-    setWebNotif(permission === 'granted')
-  }
-
-  const persistPrefs = async (partial: Record<string, unknown>) => {
-    try {
-      await updateSettings.mutateAsync(partial)
-      await refetchUser()
-      toast.success('Saved')
-    } catch {
-      toast.error('Failed to save')
-    }
-  }
 
   /** Inline SKIP — record actionTaken without navigating away */
   const handleSkip = async (alertId: string) => {
@@ -156,101 +107,22 @@ export default function AlertsPage() {
       <Topbar title="Live Alerts" subtitle="Fresh signals you can still act on" />
 
       <div className="space-y-5 p-4 pb-6 sm:p-6">
-        {/* ── Settings card ─────────────────────────────────────────────── */}
+        {/* ── Settings quick link ───────────────────────────────────────── */}
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
           <Card className="p-4 sm:p-5">
-            <h3 className="mb-5 text-sm font-semibold text-[var(--text-primary)]">Alert Settings</h3>
-
-            <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <p className="mb-2 text-xs uppercase tracking-wider text-[var(--text-muted)]">Max Alerts / Day</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {[3, 5, 10, '∞'].map((v) => (
-                    <button
-                      key={String(v)}
-                      type="button"
-                      disabled={updateSettings.isPending}
-                      onClick={() => {
-                        const next = v === '∞' ? 999 : Number(v)
-                        setMaxAlerts(next)
-                        void persistPrefs({ maxAlertsPerDay: next })
-                      }}
-                      className={`rounded-lg border px-3 py-1.5 font-mono text-xs transition-all ${
-                        (v === '∞' ? maxAlerts >= 999 : maxAlerts === Number(v))
-                          ? 'border-[var(--accent)]/40 bg-[var(--accent-glow)] text-[var(--accent-bright)]'
-                          : 'border-[var(--border)] bg-[var(--bg-secondary)] text-[var(--text-secondary)] hover:border-[var(--border-bright)]'
-                      }`}
-                    >
-                      {v}
-                    </button>
-                  ))}
-                </div>
+                <h3 className="text-sm font-semibold text-[var(--text-primary)]">Alert Preferences</h3>
+                <p className="text-xs text-[var(--text-muted)]">
+                  Manage alert frequency, Telegram delivery, and risk level in one place.
+                </p>
               </div>
-
-              <div>
-                <p className="mb-2 text-xs uppercase tracking-wider text-[var(--text-muted)]">How often?</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {[
-                    { label: 'Fast', value: '5min', mins: 5 },
-                    { label: 'Normal', value: '15min', mins: 15 },
-                    { label: 'Slow', value: '30min', mins: 30 },
-                    { label: 'Rare', value: '1hr', mins: 60 },
-                  ].map(({ label, value, mins }) => (
-                    <button
-                      key={value}
-                      type="button"
-                      disabled={updateSettings.isPending}
-                      onClick={() => {
-                        setMinTime(value)
-                        void persistPrefs({ alertIntervalMin: mins })
-                      }}
-                      className={`rounded-lg border px-3 py-1.5 text-xs transition-all ${
-                        minTime === value
-                          ? 'border-[var(--accent)]/40 bg-[var(--accent-glow)] text-[var(--accent-bright)]'
-                          : 'border-[var(--border)] bg-[var(--bg-secondary)] text-[var(--text-secondary)] hover:border-[var(--border-bright)]'
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="rounded-xl bg-[var(--bg-secondary)] p-4">
-                <Toggle
-                  checked={telegramOn}
-                  onChange={(next) => {
-                    setTelegramOn(next)
-                    void persistPrefs({ telegramAlerts: next })
-                  }}
-                  label="Telegram Alerts"
-                  description={
-                    user?.username
-                      ? `Connected as @${user.username}`
-                      : user?.telegramId
-                        ? `Telegram ID ${user.telegramId}`
-                        : 'Login with Telegram to enable'
-                  }
-                />
-              </div>
-
-              <div className="rounded-xl bg-[var(--bg-secondary)] p-4">
-                <Toggle
-                  checked={webNotif}
-                  onChange={handleWebNotif}
-                  label="Web Notifications"
-                  description="Browser push notifications"
-                />
-                {typeof Notification !== 'undefined' && notificationPermission === 'granted' && (
-                  <p className="mt-1 text-xs text-[var(--success)]">Browser notifications enabled ✓</p>
-                )}
-                {typeof Notification !== 'undefined' && notificationPermission === 'denied' && (
-                  <p className="mt-1 text-xs text-[var(--danger)]">Blocked by browser — check site settings</p>
-                )}
-                {typeof Notification !== 'undefined' && notificationPermission === 'default' && (
-                  <p className="mt-1 text-xs text-[var(--text-muted)]">Click to enable browser notifications</p>
-                )}
-              </div>
+              <Link
+                href="/dashboard/settings"
+                className="inline-flex items-center justify-center rounded-xl border border-[var(--accent)]/40 bg-[var(--accent-glow)] px-3 py-2 text-xs font-semibold text-[var(--accent-bright)] hover:border-[var(--accent)]/70"
+              >
+                Open Settings →
+              </Link>
             </div>
           </Card>
         </motion.div>
@@ -298,7 +170,7 @@ export default function AlertsPage() {
 
                     const marketQuestion = String(alert.marketQuestion ?? '')
                     const eventName = String(alert.eventName ?? '') || buildEventName(marketQuestion, side)
-                    const conf = CONFIDENCE_LABELS[confidence] ?? CONFIDENCE_LABELS.low
+                    const conf = getConfidenceLabel(confidence)
                     const dir = DIRECTION_LABELS[side] ?? DIRECTION_LABELS.YES
                     const displayReason = getDisplayReason(reasoning, confidence)
 

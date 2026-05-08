@@ -428,14 +428,11 @@ export function LandingView() {
           </div>
           <p className="text-xs text-[var(--text-muted)]">Built on Jupiter · Solana · Paper trading only</p>
           <div className="flex items-center gap-5 text-xs text-[var(--text-muted)]">
-            <a href="https://github.com" target="_blank" rel="noopener noreferrer" className="transition-colors hover:text-[var(--text-secondary)]">
+            <a href="https://github.com/aryan42116/night_agent" target="_blank" rel="noopener noreferrer" className="transition-colors hover:text-[var(--text-secondary)]">
               GitHub
             </a>
-            <a href="https://twitter.com" target="_blank" rel="noopener noreferrer" className="transition-colors hover:text-[var(--text-secondary)]">
+            <a href="https://twitter.com/aryan42116" target="_blank" rel="noopener noreferrer" className="transition-colors hover:text-[var(--text-secondary)]">
               Twitter
-            </a>
-            <a href="https://discord.com" target="_blank" rel="noopener noreferrer" className="transition-colors hover:text-[var(--text-secondary)]">
-              Discord
             </a>
           </div>
         </div>

@@ -47,6 +47,31 @@ function buildPositionEventName(question, side) {
   return `${token} ${direction}${timeStr}`;
 }
 
+function normalizeIdempotencyKey(raw) {
+  if (!raw) return null;
+  const key = String(raw).trim();
+  if (!key || key.length > 120) return null;
+  return key;
+}
+
+async function getIdempotentResult(prisma, key) {
+  const row = await prisma.appStorage.findUnique({ where: { key } });
+  if (!row?.value) return null;
+  try {
+    return JSON.parse(row.value);
+  } catch {
+    return null;
+  }
+}
+
+async function saveIdempotentResult(prisma, key, payload) {
+  await prisma.appStorage.upsert({
+    where: { key },
+    update: { value: JSON.stringify(payload) },
+    create: { key, value: JSON.stringify(payload) },
+  });
+}
+
 router.get('/', requireDb, requireAuth, async (req, res) => {
   try {
     const { status, limit = '50', offset = '0' } = req.query;
@@ -130,7 +155,10 @@ router.get('/', requireDb, requireAuth, async (req, res) => {
         }
 
         const totalCost = Number(pos.totalCost ?? 0);
-        const contracts = Number(payload.contracts ?? (currentPrice > 0 ? Math.floor(totalCost / currentPrice) : 0));
+        const contracts = Number(
+          payload.contracts
+          ?? (Number(pos.entryPrice ?? 0) > 0 ? Math.floor(totalCost / Number(pos.entryPrice)) : 0),
+        );
         const currentValue = currentPrice * contracts;
         const pnl = pos.status === 'open'
           ? currentValue - totalCost
@@ -186,6 +214,17 @@ router.get('/:id', requireDb, requireAuth, async (req, res) => {
 
 router.post('/', requireDb, requireAuth, async (req, res) => {
   try {
+    const idempotencyKey = normalizeIdempotencyKey(
+      req.headers['x-idempotency-key'] ?? req.body?.idempotencyKey ?? null,
+    );
+    if (idempotencyKey) {
+      const existing = await getIdempotentResult(
+        req.prisma,
+        `idem:positions:create:${req.user.userId}:${idempotencyKey}`,
+      );
+      if (existing) return res.status(200).json(existing);
+    }
+
     const { marketId, marketQuestion, category, side, entryPrice, amount } = req.body;
     if (!marketId || !side || entryPrice == null || amount == null) {
       return res.status(400).json({ error: 'Missing required fields' });
@@ -251,7 +290,15 @@ router.post('/', requireDb, requireAuth, async (req, res) => {
       }),
     ]);
 
-    res.status(201).json({ position: payload });
+    const result = { position: payload };
+    if (idempotencyKey) {
+      await saveIdempotentResult(
+        req.prisma,
+        `idem:positions:create:${req.user.userId}:${idempotencyKey}`,
+        result,
+      );
+    }
+    res.status(201).json(result);
   } catch (err) {
     console.error('[positions POST]', err);
     res.status(500).json({ error: 'Server error' });
@@ -260,6 +307,17 @@ router.post('/', requireDb, requireAuth, async (req, res) => {
 
 router.patch('/:id', requireDb, requireAuth, async (req, res) => {
   try {
+    const idempotencyKey = normalizeIdempotencyKey(
+      req.headers['x-idempotency-key'] ?? req.body?.idempotencyKey ?? null,
+    );
+    if (idempotencyKey) {
+      const existing = await getIdempotentResult(
+        req.prisma,
+        `idem:positions:close:${req.user.userId}:${req.params.id}:${idempotencyKey}`,
+      );
+      if (existing) return res.status(200).json(existing);
+    }
+
     const { closePrice, exitReason = 'manual' } = req.body;
     const cp = Number(closePrice);
     if (!Number.isFinite(cp) || cp < 0 || cp > 1) {
@@ -313,14 +371,22 @@ router.patch('/:id', requireDb, requireAuth, async (req, res) => {
       }),
     ]);
 
-    res.json({
+    const result = {
       id: req.params.id,
       status: 'closed',
       pnl,
       closePrice: cp,
       exitValue,
       exitReason,
-    });
+    };
+    if (idempotencyKey) {
+      await saveIdempotentResult(
+        req.prisma,
+        `idem:positions:close:${req.user.userId}:${req.params.id}:${idempotencyKey}`,
+        result,
+      );
+    }
+    res.json(result);
   } catch (err) {
     console.error('[positions PATCH]', err);
     res.status(500).json({ error: 'Server error' });

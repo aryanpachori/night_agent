@@ -55,7 +55,7 @@ export function Topbar({ title, subtitle }: TopbarProps) {
           </div>
           <div className="h-8 w-px bg-[var(--border)]" />
           <div>
-            <p className="text-[10px] uppercase tracking-wider text-[var(--text-muted)]">P&L</p>
+            <p className="text-[10px] uppercase tracking-wider text-[var(--text-muted)]">Profit %</p>
             <p
               className={`font-mono text-sm font-semibold ${pnlPositive ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}
             >

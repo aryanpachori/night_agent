@@ -73,7 +73,7 @@ export function Sidebar() {
               scanning ? 'text-[var(--success)]' : 'text-[var(--text-muted)]',
             )}
           >
-            {scanning ? 'Scanning markets' : bot?.isPaused ? 'Paused' : 'Idle'}
+            {scanning ? 'Scanning markets' : bot?.isPaused ? 'Paused' : 'Looking for opportunities'}
           </span>
         </div>
       </div>

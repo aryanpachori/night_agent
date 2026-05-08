@@ -12,6 +12,42 @@ const { invalidateCache } = require('../../bot/userManager');
 const { sendWelcomeMessage } = require('../../telegram/alerts');
 
 const router = express.Router();
+const connectAttemptBuckets = new Map();
+
+function isConnectAttemptAllowed(key) {
+  const now = Date.now();
+  const bucket = connectAttemptBuckets.get(key) ?? { count: 0, resetAt: now + 10 * 60 * 1000 };
+  if (now > bucket.resetAt) {
+    connectAttemptBuckets.set(key, { count: 1, resetAt: now + 10 * 60 * 1000 });
+    return true;
+  }
+  if (bucket.count >= 20) return false;
+  bucket.count += 1;
+  connectAttemptBuckets.set(key, bucket);
+  return true;
+}
+
+async function recordConnectAttempt(prisma, userId, ip, outcome) {
+  const today = new Date().toISOString().slice(0, 10);
+  const storageKey = `connect_attempts:${userId}:${ip || 'unknown'}:${today}`;
+  const row = await prisma.appStorage.findUnique({ where: { key: storageKey } });
+  let value = { failed: 0, blocked: 0, updatedAt: Date.now() };
+  if (row?.value) {
+    try {
+      value = { ...value, ...JSON.parse(row.value) };
+    } catch {
+      // ignore malformed historical value
+    }
+  }
+  if (outcome === 'failed') value.failed += 1;
+  if (outcome === 'blocked') value.blocked += 1;
+  value.updatedAt = Date.now();
+  await prisma.appStorage.upsert({
+    where: { key: storageKey },
+    update: { value: JSON.stringify(value) },
+    create: { key: storageKey, value: JSON.stringify(value) },
+  });
+}
 
 function cookieAttrs() {
   const parts = ['HttpOnly', 'Path=/', 'Max-Age=2592000'];
@@ -189,8 +225,9 @@ router.get('/telegram-callback', requireDb, async (req, res) => {
       });
     }
 
+    res.setHeader('Set-Cookie', `nightagent_token=${token}; ${cookieAttrs()}`);
     const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
-    return res.redirect(`${frontendUrl}/dashboard?token=${encodeURIComponent(token)}`);
+    return res.redirect(`${frontendUrl}/dashboard`);
   } catch (err) {
     console.error('[auth/telegram-callback]', err);
     const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
@@ -201,6 +238,12 @@ router.get('/telegram-callback', requireDb, async (req, res) => {
 // POST /api/auth/connect-telegram
 router.post('/connect-telegram', requireDb, requireAuth, async (req, res) => {
   try {
+    const attemptKey = `connect:${userId}:${req.ip || 'unknown'}`;
+    if (!isConnectAttemptAllowed(attemptKey)) {
+      await recordConnectAttempt(prisma, userId, req.ip, 'blocked');
+      return res.status(429).json({ error: 'Too many attempts. Please wait 10 minutes and try again.' });
+    }
+
     const prisma = req.prisma;
     const userId = req.user.userId;
     const { code } = req.body || {};
@@ -213,6 +256,7 @@ router.post('/connect-telegram', requireDb, requireAuth, async (req, res) => {
       where: { key: `connect_${normalizedCode}` },
     });
     if (!stored?.value) {
+      await recordConnectAttempt(prisma, userId, req.ip, 'failed');
       return res.status(400).json({
         error: 'Invalid code. Send /connect to @nightagentt_bot to get a new one.',
       });
@@ -229,6 +273,7 @@ router.post('/connect-telegram', requireDb, requireAuth, async (req, res) => {
     const username = data?.username ?? null;
     const expiresAt = Number(data?.expiresAt ?? 0);
     if (!telegramId || !expiresAt) {
+      await recordConnectAttempt(prisma, userId, req.ip, 'failed');
       return res.status(400).json({
         error: 'Invalid code. Send /connect to @nightagentt_bot to get a new one.',
       });
@@ -236,6 +281,7 @@ router.post('/connect-telegram', requireDb, requireAuth, async (req, res) => {
 
     if (Date.now() > expiresAt) {
       await prisma.appStorage.delete({ where: { key: `connect_${normalizedCode}` } }).catch(() => {});
+      await recordConnectAttempt(prisma, userId, req.ip, 'failed');
       return res.status(400).json({
         error: 'Code expired. Send /connect to @nightagentt_bot for a new one.',
       });
@@ -247,6 +293,7 @@ router.post('/connect-telegram', requireDb, requireAuth, async (req, res) => {
       select: { id: true },
     });
     if (existingUser && existingUser.id !== userId) {
+      await recordConnectAttempt(prisma, userId, req.ip, 'failed');
       return res.status(400).json({
         error: 'This Telegram account is already linked to another NightAgent account.',
       });

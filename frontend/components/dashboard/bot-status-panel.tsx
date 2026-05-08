@@ -85,7 +85,7 @@ export function BotStatusPanel({
             <span
               className={`text-sm font-medium ${isActive ? 'text-[var(--success)]' : 'text-[var(--text-muted)]'}`}
             >
-              {isPaused ? 'Paused' : isActive ? 'Scanning markets' : 'Idle'}
+              {isPaused ? 'Paused' : isActive ? 'Scanning markets' : 'Looking for opportunities'}
             </span>
           </div>
           {!isPaused && (

@@ -37,8 +37,9 @@ export function BetModal({ alert, onClose, onSuccess }: BetModalProps) {
   const [loading, setLoading] = useState(false)
 
   if (!alert) return null
+  const currentAlert = alert
 
-  const price = Number(alert.marketPrice ?? 0.5)
+  const price = Number(currentAlert.marketPrice ?? 0.5)
   const contracts = price > 0 ? Math.floor(amount / price) : 0
   const actualCost = contracts * price
   const potentialPayout = contracts
@@ -49,15 +50,15 @@ export function BetModal({ alert, onClose, onSuccess }: BetModalProps) {
     setLoading(true)
     try {
       const pos = await placeBet.mutateAsync({
-        marketId: alert.marketId,
-        marketQuestion: alert.marketQuestion,
-        category: alert.category,
-        side: alert.side,
+        marketId: currentAlert.marketId,
+        marketQuestion: currentAlert.marketQuestion,
+        category: currentAlert.category,
+        side: currentAlert.side,
         entryPrice: price,
         amount: actualCost,
       })
 
-      await api.patch(`/api/alerts/${alert.id}`, {
+      await api.patch(`/api/alerts/${currentAlert.id}`, {
         actionTaken: 'bet_full',
         positionId: pos?.position?.id ?? null,
       })
@@ -102,7 +103,7 @@ export function BetModal({ alert, onClose, onSuccess }: BetModalProps) {
               <div>
                 <p className="mb-1 text-xs text-[var(--text-muted)]">Placing bet on</p>
                 <h3 className="text-base font-bold text-[var(--text-primary)]">
-                  {alert.eventName ?? alert.marketQuestion?.slice(0, 50)}
+                  {currentAlert.eventName ?? currentAlert.marketQuestion?.slice(0, 50)}
                 </h3>
               </div>
               <button
@@ -117,11 +118,11 @@ export function BetModal({ alert, onClose, onSuccess }: BetModalProps) {
               <div className="h-1.5 flex-1 rounded-full bg-[var(--bg-secondary)]">
                 <div
                   className="h-full rounded-full bg-[var(--accent)]"
-                  style={{ width: `${alert.aiConfidencePct ?? 50}%` }}
+                  style={{ width: `${currentAlert.aiConfidencePct ?? 50}%` }}
                 />
               </div>
               <span className="text-xs font-semibold text-[var(--accent)]">
-                {alert.aiConfidencePct ?? 50}% chance
+                {currentAlert.aiConfidencePct ?? 50}% chance
               </span>
             </div>
           </div>

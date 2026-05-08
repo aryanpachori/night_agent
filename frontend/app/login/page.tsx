@@ -66,6 +66,9 @@ export default function LoginPage() {
     }
   }
 
+  const phantomInstalled =
+    typeof window !== 'undefined' && Boolean((window as Window & { solana?: { isPhantom?: boolean } }).solana?.isPhantom)
+
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[var(--bg-primary)]">
       <div
@@ -113,6 +116,19 @@ export default function LoginPage() {
               <WalletIcon className="h-5 w-5" />
               <span className="text-sm font-semibold">Connect Wallet</span>
             </button>
+            {!phantomInstalled && (
+              <p className="rounded-lg border border-[var(--warning)]/30 bg-[var(--warning)]/10 px-3 py-2 text-xs text-[var(--warning)]">
+                Install Phantom to continue:{' '}
+                <a
+                  href="https://phantom.app/download"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-semibold underline"
+                >
+                  phantom.app/download
+                </a>
+              </p>
+            )}
           </div>
 
           <div className="mb-5 space-y-2">

@@ -33,7 +33,7 @@ function buildEventName(question, side) {
 
 /**
  * GET /api/alerts/stream — Server-Sent Events stream for real-time alert push.
- * EventSource cannot send headers, so the JWT is passed as ?token=<jwt>.
+ * Auth comes from the same-origin nightagent_token cookie.
  */
 router.get('/stream', requireDb, requireAuth, (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');

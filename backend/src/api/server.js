@@ -4,6 +4,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const crypto = require('crypto');
 
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/user');
@@ -28,10 +29,25 @@ function createApiServer() {
       origin: corsOrigins(),
       credentials: true,
       methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id', 'X-Idempotency-Key'],
+      exposedHeaders: ['X-Request-Id'],
     }),
   );
   app.use(express.json({ limit: '1mb' }));
+
+  app.use((req, res, next) => {
+    const reqId = String(req.headers['x-request-id'] || crypto.randomUUID());
+    req.requestId = reqId;
+    res.setHeader('X-Request-Id', reqId);
+    const startedAt = Date.now();
+    res.on('finish', () => {
+      const elapsed = Date.now() - startedAt;
+      console.log(
+        `[api] ${req.method} ${req.originalUrl} status=${res.statusCode} ms=${elapsed} reqId=${reqId}`,
+      );
+    });
+    next();
+  });
 
   app.use(
     '/api',
@@ -58,7 +74,7 @@ function createApiServer() {
 
   app.use((err, req, res, next) => {
     void next;
-    console.error('[API Error]', err);
+    console.error('[API Error]', { reqId: req.requestId, err });
     const status = err.statusCode || err.status || 500;
     const msg = status === 503 ? err.message || 'Service unavailable' : 'Internal server error';
     res.status(status >= 400 && status < 600 ? status : 500).json({

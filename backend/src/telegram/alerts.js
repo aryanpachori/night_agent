@@ -14,15 +14,16 @@ const {
 const wallet = require('../wallet/paperWallet');
 const { getPrisma } = require('../db/client');
 const { emitToUser } = require('../api/sseClients');
+const { getActiveUsers } = require('../bot/userManager');
 
 let _bot = null;
-const chatId = () => process.env.TELEGRAM_CHAT_ID;
 
 function setBot(bot) {
   _bot = bot;
 }
 
 async function sendToChat(targetChatId, text, extra = {}) {
+  if (!targetChatId) return null;
   if (!_bot) {
     console.warn('[alerts] Bot not initialised');
     return null;
@@ -31,12 +32,45 @@ async function sendToChat(targetChatId, text, extra = {}) {
     return await _bot.sendMessage(String(targetChatId), text, { parse_mode: 'MarkdownV2', ...extra });
   } catch (err) {
     console.error(`[alerts] Send failed: ${err.message}`);
+    const prisma = getPrisma();
+    if (prisma) {
+      const day = new Date().toISOString().slice(0, 10);
+      const key = `delivery_dead_letter:${String(targetChatId)}:${day}`;
+      const row = await prisma.appStorage.findUnique({ where: { key } });
+      let value = { count: 0, lastError: '', updatedAt: 0 };
+      if (row?.value) {
+        try { value = { ...value, ...JSON.parse(row.value) }; } catch {}
+      }
+      value.count += 1;
+      value.lastError = err.message;
+      value.updatedAt = Date.now();
+      await prisma.appStorage.upsert({
+        where: { key },
+        update: { value: JSON.stringify(value) },
+        create: { key, value: JSON.stringify(value) },
+      });
+    }
     return null;
   }
 }
 
-async function send(text, extra = {}) {
-  return sendToChat(chatId(), text, extra);
+async function resolveTargetTelegramId(userId) {
+  const prisma = getPrisma();
+  if (!prisma) return null;
+
+  if (userId) {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { telegramId: true, telegramAlerts: true },
+    });
+    if (user?.telegramId != null && user.telegramAlerts) {
+      return String(user.telegramId);
+    }
+  }
+
+  const active = await getActiveUsers();
+  const fallback = active.find((u) => u.telegramId != null && u.telegramAlerts);
+  return fallback?.telegramId != null ? String(fallback.telegramId) : null;
 }
 
 function newOpportunityToken() {
@@ -198,18 +232,24 @@ async function sendExitAlert(position, currentPrice, profit) {
     ],
   };
   setPendingExit(position.id, { position, currentPrice, profit, expiresAt: Date.now() + 10 * 60 * 1000 });
-  await send(text, { reply_markup });
+  const targetChat = await resolveTargetTelegramId(position?.userId ?? null);
+  await sendToChat(targetChat, text, { reply_markup });
 }
 
 // ─── Stop loss: close is done in `positionMonitor`; this is Telegram follow\\-up only ─
 async function sendStopLossAutoClosedNotification(closed) {
   const text = stopLossAutoClosedMessage(closed);
-  await send(text);
+  const targetChat = await resolveTargetTelegramId(closed?.userId ?? null);
+  await sendToChat(targetChat, text);
 }
 
 // ─── sendDailySummary ─────────────────────────────────────────────────────────
 async function sendDailySummary(walletModule) {
-  await send(dailySummaryMessage(walletModule));
+  const activeUsers = await getActiveUsers();
+  const sendable = activeUsers.filter((u) => u.telegramId != null && u.telegramAlerts);
+  await Promise.all(
+    sendable.map((u) => sendToChat(String(u.telegramId), dailySummaryMessage(walletModule))),
+  );
 }
 
 async function sendPositionPriceTick(position, currentPrice, unrealizedUsd) {
@@ -218,17 +258,21 @@ async function sendPositionPriceTick(position, currentPrice, unrealizedUsd) {
   if (shouldOfferManualExit(unrealizedUsd)) {
     extra.reply_markup = { inline_keyboard: [manualExitKeyboardRow(position.id, null)] };
   }
-  return send(text, extra);
+  const targetChat = await resolveTargetTelegramId(position?.userId ?? null);
+  return sendToChat(targetChat, text, extra);
 }
 
 async function sendResolvedAlert(position, won) {
-  return send(resolvedMessage(position, won));
+  const targetChat = await resolveTargetTelegramId(position?.userId ?? null);
+  return sendToChat(targetChat, resolvedMessage(position, won));
 }
 
 // ─── sendRawMessage ───────────────────────────────────────────────────────────
 async function sendRawMessage(text) {
   const { esc } = require('./messages');
-  await send(esc(text));
+  const activeUsers = await getActiveUsers();
+  const sendable = activeUsers.filter((u) => u.telegramId != null && u.telegramAlerts);
+  await Promise.all(sendable.map((u) => sendToChat(String(u.telegramId), esc(text))));
 }
 
 // ─── sendWelcomeMessage — sent to a newly registered web user who has Telegram linked ─

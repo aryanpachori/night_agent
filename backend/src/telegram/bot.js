@@ -13,6 +13,7 @@ const { getPrisma }                    = require('../db/client');
 
 let scannerPaused = false;
 function isPaused() { return scannerPaused; }
+const connectCodeCooldown = new Map();
 
 // Injected from index.js so the /markets command can call the scanner
 let _scanMarketsFunc  = null;
@@ -334,6 +335,13 @@ function createBot() {
       await bot.sendMessage(telegramId, '❌ Database unavailable. Please try again.');
       return;
     }
+    const now = Date.now();
+    const cooldownUntil = connectCodeCooldown.get(String(telegramId)) ?? 0;
+    if (cooldownUntil > now) {
+      const waitSeconds = Math.ceil((cooldownUntil - now) / 1000);
+      await bot.sendMessage(telegramId, `⏳ Please wait ${waitSeconds}s before requesting another code.`);
+      return;
+    }
     try {
       const code = Math.random().toString(36).slice(2, 8).toUpperCase();
       const value = JSON.stringify({
@@ -355,6 +363,7 @@ function createBot() {
           `⏰ Expires in 15 minutes\\.`,
         { parse_mode: 'MarkdownV2' },
       );
+      connectCodeCooldown.set(String(telegramId), Date.now() + 30 * 1000);
       console.log(`[bot/connect] Code ${code} generated for telegramId ${telegramId}`);
     } catch (err) {
       console.error('[bot/connect]', err);

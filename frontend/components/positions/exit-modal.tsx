@@ -135,7 +135,7 @@ export function ExitModal({ isOpen, onClose, position, onConfirm, loading }: Exi
                   </p>
                 </div>
                 <div className="text-right">
-                  <p className="text-xs text-[var(--text-muted)]">Unrealized P&L</p>
+                  <p className="text-xs text-[var(--text-muted)]">Current profit/loss</p>
                   <p
                     className={`text-lg font-mono font-bold ${pnlPositive ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}
                   >
@@ -163,7 +163,7 @@ export function ExitModal({ isOpen, onClose, position, onConfirm, loading }: Exi
                   className="flex-1"
                   disabled={loading || !validPrice}
                 >
-                  {loading ? 'Closing…' : 'Exit Position'}
+                  {loading ? 'Closing…' : 'Close bet'}
                 </Button>
               </div>
             </div>

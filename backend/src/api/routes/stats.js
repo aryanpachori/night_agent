@@ -100,4 +100,42 @@ router.get('/bot-status', requireDb, requireAuth, async (req, res) => {
   }
 });
 
+router.get('/delivery-metrics', requireDb, requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const today = startOfToday();
+    const [alertsToday, pendingAlerts, failedConnectAttempts, deadLetterBuckets] = await Promise.all([
+      req.prisma.alert.count({ where: { userId, createdAt: { gte: today } } }),
+      req.prisma.alert.count({ where: { userId, actionTaken: null } }),
+      req.prisma.appStorage.count({
+        where: { key: { startsWith: `connect_attempts:${userId}:` } },
+      }),
+      req.prisma.appStorage.findMany({
+        where: { key: { startsWith: 'delivery_dead_letter:' } },
+        select: { key: true, value: true },
+      }),
+    ]);
+
+    const deliveryFailures = deadLetterBuckets.reduce((sum, row) => {
+      try {
+        const parsed = JSON.parse(row.value || '{}');
+        return sum + Number(parsed.count || 0);
+      } catch {
+        return sum;
+      }
+    }, 0);
+
+    res.json({
+      alertsToday,
+      pendingAlerts,
+      failedConnectAttemptBuckets: failedConnectAttempts,
+      deliveryDeadLetters: deliveryFailures,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('[stats/delivery-metrics]', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 module.exports = router;

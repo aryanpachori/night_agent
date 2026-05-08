@@ -9,7 +9,9 @@
     "start:api": "node api.js",
     "dev": "node --watch index.js",
     "db:generate": "prisma generate",
-    "db:push": "prisma db push"
+    "db:push": "prisma db push",
+    "reconcile:positions": "node scripts/reconcilePositions.js",
+    "contract:smoke": "node scripts/contractSmoke.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.15.0",

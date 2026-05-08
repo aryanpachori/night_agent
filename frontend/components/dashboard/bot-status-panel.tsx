@@ -100,7 +100,7 @@ export function BotStatusPanel({
       <div className="space-y-2.5 text-xs">
         {[
           ['Last scan', lastScanLabel],
-          ['Markets watching', String(marketsWatching)],
+          ['Markets being scanned', marketsWatching > 0 ? String(marketsWatching) : 'Updating...'],
           ['Alerts today', `${alertsToday} / ${maxAlerts}`],
           ['Categories', categoriesLabel],
         ].map(([label, value]) => (

@@ -124,7 +124,7 @@ export default function DashboardPage() {
             icon={Wallet}
             label="Paper Balance"
             value={formatUSD(stats.balance)}
-            change={formatPct(stats.roi)}
+            change={`${formatPct(stats.roi)} profit`}
             changePositive={stats.totalPnl >= 0}
             subtitle={`Starting ${formatUSD(stats.startingBalance)}`}
             glow
@@ -133,7 +133,7 @@ export default function DashboardPage() {
             icon={TrendingUp}
             label="Total P&L"
             value={formatUSD(stats.totalPnl)}
-            change={formatPct(stats.roi)}
+            change={`${formatPct(stats.roi)} profit`}
             changePositive={stats.totalPnl >= 0}
           />
           <StatCard
@@ -196,7 +196,7 @@ export default function DashboardPage() {
                 <h3 className="text-sm font-semibold text-[var(--text-primary)]">Portfolio Performance</h3>
                 <p className="text-xs text-[var(--text-muted)]">30-day paper trading balance</p>
               </div>
-              <Badge variant="success">{formatPct(stats.roi)}</Badge>
+              <Badge variant="success">{formatPct(stats.roi)} profit</Badge>
             </div>
             <PnlChart data={walletHistory?.history} />
           </Card>

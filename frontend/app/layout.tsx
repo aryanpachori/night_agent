@@ -23,11 +23,11 @@ const jetbrainsMono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "NightAgent — AI Quant Layer for Jupiter Prediction Markets",
+    default: "NightAgent — AI alerts for prediction markets",
     template: "%s — NightAgent",
   },
   description:
-    "Scan 3,400+ markets, find mispriced bets with Black-Scholes AI, and get Telegram alerts the moment there's real edge.",
+    "AI finds good bets in prediction markets, you decide what to do, and paper trading lets you learn safely.",
   icons: {
     icon: [{ url: "/favicon.ico", type: "image/x-icon" }],
     shortcut: "/favicon.ico",

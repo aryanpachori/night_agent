@@ -30,7 +30,7 @@ const tickerItems = [
   { icon: '⚡', text: 'New markets open at 50/50 — first mover wins' },
   { icon: '🎯', text: '37% of AI agents profitable vs 7% of humans' },
   { icon: '🔒', text: 'Non-custodial — your keys never leave your wallet' },
-  { icon: '📈', text: 'Black-Scholes · Kelly Criterion · Gemini AI' },
+  { icon: '📈', text: 'AI checks odds and suggests safer bet sizes' },
   { icon: '🏆', text: '68% win rate across 1,240+ markets analyzed' },
   { icon: '⏱️', text: 'Alerts delivered in under 60 seconds of market open' },
 ]
@@ -48,7 +48,7 @@ const howItWorks = [
     step: '02',
     title: 'Analyze',
     body:
-      'When something looks interesting, the AI reads recent news, runs Black-Scholes pricing and Kelly Criterion sizing, and calculates exactly how large the edge is — in plain numbers.',
+      'When something looks interesting, the AI reads recent news, checks current odds, and suggests how much you can bet with your paper balance.',
   },
   {
     icon: Bell,
@@ -234,8 +234,8 @@ export function LandingView() {
           transition={{ duration: 0.6, delay: 0.85 }}
           className="relative z-10 mb-8 max-w-xl px-1 text-base leading-relaxed text-[var(--text-secondary)] sm:text-lg"
         >
-          NightAgent scans thousands of markets 24/7, finds mispriced bets using Black-Scholes and Kelly Criterion,
-          and alerts you the moment there&apos;s real edge.
+          AI finds good bets in prediction markets, explains them in plain English, and sends alerts fast. You decide
+          if you want to bet, and you can practice safely with paper trading.
         </motion.p>
 
         <motion.div
@@ -428,11 +428,15 @@ export function LandingView() {
           </div>
           <p className="text-xs text-[var(--text-muted)]">Built on Jupiter · Solana · Paper trading only</p>
           <div className="flex items-center gap-5 text-xs text-[var(--text-muted)]">
-            {['GitHub', 'Twitter', 'Discord'].map(link => (
-              <a key={link} href="#" className="transition-colors hover:text-[var(--text-secondary)]">
-                {link}
-              </a>
-            ))}
+            <a href="https://github.com" target="_blank" rel="noopener noreferrer" className="transition-colors hover:text-[var(--text-secondary)]">
+              GitHub
+            </a>
+            <a href="https://twitter.com" target="_blank" rel="noopener noreferrer" className="transition-colors hover:text-[var(--text-secondary)]">
+              Twitter
+            </a>
+            <a href="https://discord.com" target="_blank" rel="noopener noreferrer" className="transition-colors hover:text-[var(--text-secondary)]">
+              Discord
+            </a>
           </div>
         </div>
       </footer>

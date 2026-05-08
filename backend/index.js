@@ -107,7 +107,15 @@ async function runOpportunityScan({ newOnly = false, moreMode = false } = {}) {
 
   let markets;
   try {
-    markets = await scanMarkets({ newOnly });
+    let scanCategories = ['crypto'];
+    if (getPrisma()) {
+      const users = await getActiveUsers();
+      const userCategories = users.flatMap((u) => Array.isArray(u.categories) ? u.categories : []);
+      if (userCategories.length > 0) {
+        scanCategories = [...new Set(userCategories.map((c) => String(c).toLowerCase().trim()).filter(Boolean))];
+      }
+    }
+    markets = await scanMarkets({ newOnly, categories: scanCategories });
   } catch (err) {
     console.error(`[scan] Market scan failed: ${err.message}`);
     return;

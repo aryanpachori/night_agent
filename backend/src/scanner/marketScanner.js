@@ -21,6 +21,27 @@ function jupClient() {
 
 function toDecimal(native) { return native / NATIVE_UNIT; }
 function toNative(decimal)  { return Math.round(decimal * NATIVE_UNIT); }
+const JUPITER_CATEGORIES = new Set([
+  'all',
+  'crypto',
+  'sports',
+  'politics',
+  'esports',
+  'culture',
+  'economics',
+  'tech',
+]);
+
+function normalizeCategories(rawCategories) {
+  const input = Array.isArray(rawCategories) ? rawCategories : [];
+  const mapped = input
+    .map((c) => String(c || '').trim().toLowerCase())
+    .filter(Boolean)
+    .map((c) => (c === 'us elections' ? 'politics' : c))
+    .filter((c) => JUPITER_CATEGORIES.has(c));
+  if (!mapped.length) return ['crypto'];
+  return [...new Set(mapped)];
+}
 
 /**
  * When Jupiter sets one side to 0, derive the other from the binary complement in native 1e6 units.
@@ -155,11 +176,11 @@ function normaliseMarket(event, market, now) {
 }
 
 /**
- * Scan for crypto prediction markets.
- * @param {{ newOnly?: boolean }} options
+ * Scan for prediction markets.
+ * @param {{ newOnly?: boolean, categories?: string[] }} options
  *   newOnly is kept for caller logs; filtering is from {@link SCAN_JUPITER_FILTERS} (default live only).
  */
-async function scanMarkets({ newOnly = false } = {}) {
+async function scanMarkets({ newOnly = false, categories = ['crypto'] } = {}) {
   const MIN_PRICE      = parseFloat(process.env.MIN_PRICE)    || 0.15;
   const MAX_PRICE      = parseFloat(process.env.MAX_PRICE)    || 0.85;
   // Minimum time until close: use MIN_HOURS_LEFT / MIN_RESOLVE_MINUTES only (no day floor).
@@ -196,6 +217,7 @@ async function scanMarkets({ newOnly = false } = {}) {
   const maxEndMs = now + MAX_DAYS * 86_400_000;
 
   const client  = jupClient();
+  const scanCategories = normalizeCategories(categories);
   // 'live' = tradable, active (default for opportunities). 'new' / 'trending' optional via env.
   const raw     = (process.env.SCAN_JUPITER_FILTERS || 'live').trim();
   const filters = raw
@@ -204,21 +226,25 @@ async function scanMarkets({ newOnly = false } = {}) {
     .filter(s => s.length > 0);
   if (filters.length === 0) filters.push('live');
 
-  const results = await Promise.all(
-    filters.map(filter =>
-      client.get('/events', {
-        params: { category: 'crypto', filter, includeMarkets: true, end: 100 },
-      })
-        .then(r => {
-          const raw = r.data;
-          return Array.isArray(raw) ? raw : (raw.data || raw.events || []);
+  const requests = [];
+  for (const category of scanCategories) {
+    for (const filter of filters) {
+      requests.push(
+        client.get('/events', {
+          params: { category, filter, includeMarkets: true, end: 100 },
         })
-        .catch(err => {
-          console.warn(`[scanner] fetch failed (filter=${filter}): ${err.message}`);
-          return [];
-        })
-    )
-  );
+          .then(r => {
+            const raw = r.data;
+            return Array.isArray(raw) ? raw : (raw.data || raw.events || []);
+          })
+          .catch(err => {
+            console.warn(`[scanner] fetch failed (category=${category}, filter=${filter}): ${err.message}`);
+            return [];
+          }),
+      );
+    }
+  }
+  const results = await Promise.all(requests);
 
   // Deduplicate events
   const eventMap = new Map();
@@ -227,7 +253,9 @@ async function scanMarkets({ newOnly = false } = {}) {
     if (id && !eventMap.has(id)) eventMap.set(id, ev);
   });
   const events = [...eventMap.values()];
-  console.log(`[scanner] Fetched ${events.length} unique crypto events (filters: ${filters.join(', ')})`);
+  console.log(
+    `[scanner] Fetched ${events.length} unique events (categories: ${scanCategories.join(', ')} | filters: ${filters.join(', ')})`,
+  );
   if (events.length > 0 && process.env.DEBUG_SCANNER === 'true') {
     const sample = events[0];
     console.log('[scanner] RAW SAMPLE EVENT:', JSON.stringify({

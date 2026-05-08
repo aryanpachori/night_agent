@@ -8,6 +8,7 @@ const { requireAuth } = require('../middleware/auth');
 const router = express.Router();
 const JUPITER_BASE = process.env.JUPITER_PREDICTION_BASE_URL ?? 'https://api.jup.ag/prediction/v1';
 const JUPITER_KEY = process.env.JUPITER_PREDICTION_API_KEY ?? process.env.JUPITER_API_KEY ?? '';
+const DEBUG_JUPITER_TIME = String(process.env.DEBUG_JUPITER_TIME || '').toLowerCase() === 'true';
 
 function asObjectPayload(payload) {
   if (payload && typeof payload === 'object' && !Array.isArray(payload)) return { ...payload };
@@ -52,6 +53,74 @@ function normalizeIdempotencyKey(raw) {
   const key = String(raw).trim();
   if (!key || key.length > 120) return null;
   return key;
+}
+
+function deriveCloseTimeFromQuestion(question) {
+  if (!question) return null;
+  const q = String(question);
+  const re = /([A-Za-z]+)\s+(\d{1,2}),\s*(\d{1,2}):(\d{2})(AM|PM)\s*-\s*(\d{1,2}):(\d{2})(AM|PM)/i;
+  const m = q.match(re);
+  if (!m) return null;
+
+  const monthStr = m[1];
+  const day = Number(m[2]);
+  const endHourRaw = Number(m[6]);
+  const endMinute = Number(m[7]);
+  const endMeridiem = String(m[8] || '').toUpperCase();
+
+  const monthIdx = new Date(`${monthStr} 1, 2000`).getMonth();
+  if (!Number.isFinite(monthIdx) || monthIdx < 0 || monthIdx > 11) return null;
+  if (!Number.isFinite(day) || day < 1 || day > 31) return null;
+  if (!Number.isFinite(endHourRaw) || endHourRaw < 1 || endHourRaw > 12) return null;
+  if (!Number.isFinite(endMinute) || endMinute < 0 || endMinute > 59) return null;
+
+  let hour24 = endHourRaw % 12;
+  if (endMeridiem === 'PM') hour24 += 12;
+
+  const now = new Date();
+  let year = now.getUTCFullYear();
+  let candidate = new Date(Date.UTC(year, monthIdx, day, hour24, endMinute, 0, 0));
+
+  // If parsed close is implausibly far in the past, assume next year market label.
+  if (candidate.getTime() < now.getTime() - 90 * 24 * 60 * 60 * 1000) {
+    year += 1;
+    candidate = new Date(Date.UTC(year, monthIdx, day, hour24, endMinute, 0, 0));
+  }
+
+  return candidate.getTime();
+}
+
+function parseMaybeMs(value) {
+  if (value == null) return null;
+  if (typeof value === 'string') {
+    const asNum = Number(value);
+    if (Number.isFinite(asNum) && asNum > 0) {
+      return asNum > 1e12 ? asNum : asNum * 1000;
+    }
+    const asDate = Date.parse(value);
+    return Number.isFinite(asDate) ? asDate : null;
+  }
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return value > 1e12 ? value : value * 1000;
+  }
+  return null;
+}
+
+function extractCloseTimeMs(jupData) {
+  if (!jupData || typeof jupData !== 'object') return null;
+  const candidates = [
+    jupData.closeTime,
+    jupData.market?.closeTime,
+    jupData.market?.resolveAt,
+    jupData.metadata?.closeTime,
+    jupData.event?.closeTime,
+    jupData.event?.metadata?.closeTime,
+  ];
+  for (const c of candidates) {
+    const ms = parseMaybeMs(c);
+    if (ms) return ms;
+  }
+  return null;
 }
 
 async function getIdempotentResult(prisma, key) {
@@ -109,6 +178,7 @@ router.get('/', requireDb, requireAuth, async (req, res) => {
         }
 
         if (pos.status === 'open' && pos.marketId) {
+          let closeMs = Number(payload.closeTimeMs ?? 0) || null;
           try {
             const jupRes = await fetch(`${JUPITER_BASE}/markets/${pos.marketId}`, {
               headers: JUPITER_KEY ? { 'x-api-key': JUPITER_KEY } : {},
@@ -123,27 +193,19 @@ router.get('/', requireDb, requireAuth, async (req, res) => {
                 currentPrice = Number(pricing.buyNoPriceUsd ?? pricing.buyNoCost ?? 0) / 1_000_000;
               }
 
-              const closeTime = jupData.closeTime;
-              if (closeTime) {
-                const closeMs = closeTime > 1e12 ? closeTime : closeTime * 1000;
-                const msLeft = closeMs - Date.now();
-                if (msLeft > 0) {
-                  const totalMins = Math.ceil(msLeft / 60000);
-                  if (totalMins < 60) {
-                    timeLabel = `${totalMins}m`;
-                    hoursLeft = 0;
-                    daysLeft = 0;
-                  } else if (totalMins < 1440) {
-                    hoursLeft = Math.ceil(totalMins / 60);
-                    timeLabel = `${hoursLeft}h`;
-                    daysLeft = 0;
-                  } else {
-                    daysLeft = Math.ceil(totalMins / 1440);
-                    timeLabel = `${daysLeft}d`;
-                  }
-                } else {
-                  timeLabel = 'Ended';
-                }
+              if (!closeMs) {
+                closeMs = extractCloseTimeMs(jupData);
+              }
+              if (DEBUG_JUPITER_TIME) {
+                console.log('[positions] jup market time payload', {
+                  marketId: pos.marketId,
+                  closeTime: jupData?.closeTime,
+                  marketCloseTime: jupData?.market?.closeTime,
+                  metadataCloseTime: jupData?.metadata?.closeTime,
+                  eventCloseTime: jupData?.event?.closeTime,
+                  eventMetadataCloseTime: jupData?.event?.metadata?.closeTime,
+                  extractedCloseMs: closeMs,
+                });
               }
 
               if (jupData.title && jupData.title.length > 10) marketQuestion = jupData.title;
@@ -151,6 +213,33 @@ router.get('/', requireDb, requireAuth, async (req, res) => {
             }
           } catch (jupErr) {
             console.error(`[positions] Jupiter fetch failed for ${pos.marketId}:`, jupErr.message);
+          }
+
+          if (!closeMs) {
+            closeMs = deriveCloseTimeFromQuestion(marketQuestion);
+          }
+
+          if (closeMs) {
+            const msLeft = closeMs - Date.now();
+            if (msLeft > 0) {
+              const totalMins = Math.ceil(msLeft / 60000);
+              if (totalMins < 60) {
+                timeLabel = `${totalMins}m`;
+                hoursLeft = 0;
+                daysLeft = 0;
+              } else if (totalMins < 1440) {
+                hoursLeft = Math.ceil(totalMins / 60);
+                timeLabel = `${hoursLeft}h`;
+                daysLeft = 0;
+              } else {
+                daysLeft = Math.ceil(totalMins / 1440);
+                timeLabel = `${daysLeft}d`;
+              }
+            } else {
+              timeLabel = 'Ended';
+              hoursLeft = 0;
+              daysLeft = 0;
+            }
           }
         }
 
@@ -233,6 +322,7 @@ router.post('/', requireDb, requireAuth, async (req, res) => {
     if (Number(amount) < 1) return res.status(400).json({ error: 'Min bet $1' });
 
     // Never allow opening a position on an already-ended market.
+    let closeMs = null;
     try {
       const jupRes = await fetch(`${JUPITER_BASE}/markets/${marketId}`, {
         headers: JUPITER_KEY ? { 'x-api-key': JUPITER_KEY } : {},
@@ -240,14 +330,22 @@ router.post('/', requireDb, requireAuth, async (req, res) => {
       });
       if (jupRes.ok) {
         const jupData = await jupRes.json();
-        const closeTime = Number(jupData?.closeTime ?? 0);
-        if (closeTime) {
-          const closeMs = closeTime > 1e12 ? closeTime : closeTime * 1000;
-          if (Date.now() >= closeMs) {
-            return res.status(400).json({
-              error: 'This alert already ended. Choose a live alert.',
-            });
-          }
+        closeMs = extractCloseTimeMs(jupData);
+        if (DEBUG_JUPITER_TIME) {
+          console.log('[positions POST] jup market time payload', {
+            marketId,
+            closeTime: jupData?.closeTime,
+            marketCloseTime: jupData?.market?.closeTime,
+            metadataCloseTime: jupData?.metadata?.closeTime,
+            eventCloseTime: jupData?.event?.closeTime,
+            eventMetadataCloseTime: jupData?.event?.metadata?.closeTime,
+            extractedCloseMs: closeMs,
+          });
+        }
+        if (closeMs && Date.now() >= closeMs) {
+          return res.status(400).json({
+            error: 'This alert already ended. Choose a live alert.',
+          });
         }
       }
     } catch (jupErr) {
@@ -289,6 +387,7 @@ router.post('/', requireDb, requireAuth, async (req, res) => {
       potentialProfit: contracts - actualCost,
       status: 'open',
       openedAt: now.toISOString(),
+      closeTimeMs: closeMs,
       source: 'dashboard',
     };
 

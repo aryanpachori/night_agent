@@ -50,6 +50,7 @@ async function checkVerificationCode(requestId, code) {
   });
 
   const data = await res.json();
+  console.log('[gateway] checkVerificationStatus raw response:', JSON.stringify(data));
   if (!data.ok) {
     console.error('[gateway] checkVerificationStatus failed:', data);
     throw new Error(data.error ?? 'Verification request failed');

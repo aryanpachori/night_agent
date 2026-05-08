@@ -175,6 +175,19 @@ function createBot() {
     });
   }
 
+  async function getDbUserByTelegramId(telegramId) {
+    const prisma = getPrisma();
+    if (!prisma || telegramId == null) return null;
+    try {
+      return await prisma.user.findUnique({
+        where: { telegramId: BigInt(telegramId) },
+        select: { id: true, telegramId: true, firstName: true },
+      });
+    } catch {
+      return null;
+    }
+  }
+
   async function getUserOpenPositions(userId, limit = 10) {
     const prisma = getPrisma();
     if (!prisma || !userId) return [];
@@ -292,6 +305,52 @@ function createBot() {
     ]);
 
     return payload;
+  }
+
+  async function closeLatestDbPositionForMarket(userId, marketId, side, closePrice, exitReason = 'manual_telegram') {
+    const prisma = getPrisma();
+    if (!prisma || !userId || !marketId) return null;
+    const row = await prisma.paperPosition.findFirst({
+      where: { userId, marketId, side, status: 'open' },
+      orderBy: { openedAt: 'desc' },
+    });
+    if (!row) return null;
+    const entry = Number(row.entryPrice ?? 0);
+    const totalCost = Number(row.totalCost ?? 0);
+    if (!Number.isFinite(entry) || entry <= 0 || !Number.isFinite(totalCost) || totalCost <= 0) return null;
+    const contracts = totalCost / entry;
+    const pnl = side === 'YES' ? (closePrice - entry) * contracts : (entry - closePrice) * contracts;
+    const exitValue = totalCost + pnl;
+    const now = new Date();
+    await prisma.$transaction([
+      prisma.paperPosition.update({
+        where: { id: row.id },
+        data: {
+          status: 'closed',
+          pnl,
+          closePrice,
+          exitReason,
+          closedAt: now,
+          payload: {
+            ...(row.payload && typeof row.payload === 'object' ? row.payload : {}),
+            status: 'closed',
+            pnl,
+            closePrice,
+            exitReason,
+            closedAt: now.toISOString(),
+          },
+        },
+      }),
+      prisma.wallet.update({
+        where: { userId },
+        data: {
+          balance: { increment: exitValue },
+          totalPnl: { increment: pnl },
+          ...(pnl >= 0 ? { wins: { increment: 1 } } : { losses: { increment: 1 } }),
+        },
+      }),
+    ]);
+    return { id: row.id, pnl };
   }
 
   async function closeUserPositionAtMarket(userId, positionId) {
@@ -1094,12 +1153,22 @@ function createBot() {
       const [, positionId, action] = data.split(':');
       if (action !== 'full' && action !== 'half') return;
       try {
+        const dbUser = await getDbUserByTelegramId(query.from?.id);
         const result = await executeManualExit(positionId, action);
         if (result.kind === 'half') {
           const pnl = result.pnl;
           bot.sendMessage(chatId, `Closed half\\. PnL: ${pnl >= 0 ? '\\+' : ''}$${pnl.toFixed(2)}`, { parse_mode: 'MarkdownV2' });
         } else {
           reply(chatId, msgs.manualExitClosedMessage(result.closed));
+        }
+        if (dbUser && result?.closed?.marketId && result?.closed?.side && Number.isFinite(Number(result?.closed?.closePrice))) {
+          await closeLatestDbPositionForMarket(
+            dbUser.id,
+            String(result.closed.marketId),
+            String(result.closed.side),
+            Number(result.closed.closePrice),
+            action === 'half' ? 'manual_telegram_half' : 'manual_telegram',
+          );
         }
       } catch (err) {
         bot.sendMessage(chatId, `Error: ${msgs.esc(err.message)}`, { parse_mode: 'MarkdownV2' });
@@ -1110,6 +1179,7 @@ function createBot() {
     // ── exit:{positionId}:{action} ───────────────────────────────────────────
     if (data.startsWith('exit:')) {
       const [, positionId, action] = data.split(':');
+      const dbUser = await getDbUserByTelegramId(query.from?.id);
 
       if (action === 'hold') {
         wallet.markPositionAlerted(positionId);
@@ -1134,10 +1204,28 @@ function createBot() {
           const pnl     = partial.pnl ?? 0;
           alerts.pendingExits.delete(positionId);
           bot.sendMessage(chatId, `Closed half\\. PnL: ${pnl >= 0 ? '\\+' : ''}$${pnl.toFixed(2)}`, { parse_mode: 'MarkdownV2' });
+          if (dbUser && pending?.position?.marketId && pending?.position?.side) {
+            await closeLatestDbPositionForMarket(
+              dbUser.id,
+              String(pending.position.marketId),
+              String(pending.position.side),
+              Number(closePrice),
+              'manual_telegram_half',
+            );
+          }
         } else {
           const closed = wallet.closePosition(positionId, closePrice, 'manual');
           alerts.pendingExits.delete(positionId);
           reply(chatId, msgs.manualExitClosedMessage(closed));
+          if (dbUser && closed?.marketId && closed?.side) {
+            await closeLatestDbPositionForMarket(
+              dbUser.id,
+              String(closed.marketId),
+              String(closed.side),
+              Number(closePrice),
+              'manual_telegram',
+            );
+          }
         }
       } catch (err) {
         bot.sendMessage(chatId, `Failed to close: ${err.message}`);

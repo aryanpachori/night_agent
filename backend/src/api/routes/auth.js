@@ -238,14 +238,14 @@ router.get('/telegram-callback', requireDb, async (req, res) => {
 // POST /api/auth/connect-telegram
 router.post('/connect-telegram', requireDb, requireAuth, async (req, res) => {
   try {
+    const prisma = req.prisma;
+    const userId = req.user.userId;
     const attemptKey = `connect:${userId}:${req.ip || 'unknown'}`;
     if (!isConnectAttemptAllowed(attemptKey)) {
       await recordConnectAttempt(prisma, userId, req.ip, 'blocked');
       return res.status(429).json({ error: 'Too many attempts. Please wait 10 minutes and try again.' });
     }
 
-    const prisma = req.prisma;
-    const userId = req.user.userId;
     const { code } = req.body || {};
     if (!code || String(code).trim().length !== 6) {
       return res.status(400).json({ error: 'Enter the 6-character code from the bot' });

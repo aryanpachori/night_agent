@@ -232,6 +232,28 @@ router.post('/', requireDb, requireAuth, async (req, res) => {
     if (!['YES', 'NO'].includes(side)) return res.status(400).json({ error: 'Invalid side' });
     if (Number(amount) < 1) return res.status(400).json({ error: 'Min bet $1' });
 
+    // Never allow opening a position on an already-ended market.
+    try {
+      const jupRes = await fetch(`${JUPITER_BASE}/markets/${marketId}`, {
+        headers: JUPITER_KEY ? { 'x-api-key': JUPITER_KEY } : {},
+        signal: AbortSignal.timeout(4000),
+      });
+      if (jupRes.ok) {
+        const jupData = await jupRes.json();
+        const closeTime = Number(jupData?.closeTime ?? 0);
+        if (closeTime) {
+          const closeMs = closeTime > 1e12 ? closeTime : closeTime * 1000;
+          if (Date.now() >= closeMs) {
+            return res.status(400).json({
+              error: 'This alert already ended. Choose a live alert.',
+            });
+          }
+        }
+      }
+    } catch (jupErr) {
+      console.warn('[positions POST] Jupiter close-time check failed:', jupErr?.message || jupErr);
+    }
+
     const wallet = await req.prisma.wallet.findUnique({
       where: { userId: req.user.userId },
       select: { balance: true },

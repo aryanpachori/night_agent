@@ -6,6 +6,8 @@ const { requireAuth } = require('../middleware/auth');
 const { addClient, removeClient } = require('../sseClients');
 
 const router = express.Router();
+const JUPITER_BASE = process.env.JUPITER_PREDICTION_BASE_URL ?? 'https://api.jup.ag/prediction/v1';
+const JUPITER_KEY = process.env.JUPITER_PREDICTION_API_KEY ?? process.env.JUPITER_API_KEY ?? '';
 
 function buildEventName(question, side) {
   if (!question) return 'Market event';
@@ -92,6 +94,31 @@ router.get('/', requireDb, requireAuth, async (req, res) => {
       prisma.alert.count({ where }),
     ]);
 
+    const marketLiveMap = new Map();
+    const uniqueMarketIds = [...new Set(rows.map((a) => a.marketId).filter(Boolean))];
+    await Promise.all(uniqueMarketIds.map(async (marketId) => {
+      try {
+        const jupRes = await fetch(`${JUPITER_BASE}/markets/${marketId}`, {
+          headers: JUPITER_KEY ? { 'x-api-key': JUPITER_KEY } : {},
+          signal: AbortSignal.timeout(3000),
+        });
+        if (!jupRes.ok) {
+          marketLiveMap.set(marketId, true);
+          return;
+        }
+        const jupData = await jupRes.json();
+        const closeTime = Number(jupData?.closeTime ?? 0);
+        if (!closeTime) {
+          marketLiveMap.set(marketId, true);
+          return;
+        }
+        const closeMs = closeTime > 1e12 ? closeTime : closeTime * 1000;
+        marketLiveMap.set(marketId, Date.now() < closeMs);
+      } catch {
+        marketLiveMap.set(marketId, true);
+      }
+    }));
+
     const alerts = rows.map(a => ({
       ...a,
       // Convenience aliases used by the frontend
@@ -102,7 +129,8 @@ router.get('/', requireDb, requireAuth, async (req, res) => {
       eventName: buildEventName(a.marketQuestion, a.side),
       isActionable:
         !a.actionTaken &&
-        Date.now() - new Date(a.createdAt).getTime() < 5 * 60 * 1000,
+        Date.now() - new Date(a.createdAt).getTime() < 5 * 60 * 1000 &&
+        marketLiveMap.get(a.marketId) !== false,
     }));
 
     res.json({ alerts, total });

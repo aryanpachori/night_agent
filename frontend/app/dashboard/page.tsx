@@ -268,6 +268,7 @@ export default function DashboardPage() {
                 const action = String(alert.actionTaken ?? '')
                 const hasActed = action !== ''
                 const isBet = action === 'bet_full' || action === 'bet_half'
+                const isActionable = Boolean(alert.isActionable)
                 const createdAt = alert.createdAt ? new Date(String(alert.createdAt)) : new Date()
                 const side = String(alert.side ?? 'YES')
                 const marketId = String(alert.marketId ?? '')
@@ -302,7 +303,7 @@ export default function DashboardPage() {
                         }`}>
                           {isBet ? '✅ Bet' : '⏭ Skipped'}
                         </span>
-                      ) : marketId ? (
+                      ) : marketId && isActionable ? (
                         <button
                           type="button"
                           onClick={() => setBettingAlert(alert)}
@@ -310,6 +311,10 @@ export default function DashboardPage() {
                         >
                           Bet →
                         </button>
+                      ) : !hasActed ? (
+                        <span className="rounded-full border border-[var(--border)] bg-[var(--bg-card)] px-2 py-0.5 text-[9px] font-medium text-[var(--text-muted)]">
+                          Expired
+                        </span>
                       ) : null}
                     </div>
                   </div>

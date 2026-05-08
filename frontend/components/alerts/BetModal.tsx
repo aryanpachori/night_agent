@@ -83,6 +83,7 @@ export function BetModal({ alert, onClose, onSuccess }: BetModalProps) {
   return (
     <AnimatePresence>
       <motion.div
+        key="betmodal-backdrop"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
@@ -91,6 +92,7 @@ export function BetModal({ alert, onClose, onSuccess }: BetModalProps) {
       />
 
       <motion.div
+        key="betmodal-panel"
         initial={{ opacity: 0, scale: 0.95, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.97 }}

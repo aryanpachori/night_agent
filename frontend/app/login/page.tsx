@@ -94,7 +94,7 @@ export default function LoginPage() {
             </div>
             <h1 className="mb-1 text-xl font-bold text-[var(--text-primary)]">NightAgent</h1>
             <p className="max-w-[220px] text-center text-xs text-[var(--text-muted)]">
-              AI quant layer for Jupiter Prediction Markets
+              AI alerts for prediction markets
             </p>
           </div>
 

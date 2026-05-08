@@ -22,7 +22,11 @@ export function DashboardAuthShell({ children }: { children: React.ReactNode }) 
   }
 
   if (!user) {
-    return null
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[var(--bg-primary)] px-4 text-center">
+        <p className="text-sm text-[var(--text-muted)]">Redirecting to login...</p>
+      </div>
+    )
   }
 
   return (

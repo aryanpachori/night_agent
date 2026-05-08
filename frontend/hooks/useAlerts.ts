@@ -2,12 +2,12 @@ import { useEffect, useRef } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { api, PUBLIC_API_BASE_URL } from "@/lib/api"
 
-export function useAlerts(type?: "bet" | "skipped" | "all", limit = 20) {
+export function useAlerts(type?: "bet" | "skipped" | "pending" | "all", limit = 20) {
   return useQuery({
     queryKey: ["alerts", type ?? "all", limit],
     queryFn: () => api.get("/api/alerts", { params: { type, limit } }).then((r) => r.data),
-    refetchInterval: 60 * 1000,
-    staleTime: 30 * 1000,
+    refetchInterval: 15 * 1000,
+    staleTime: 10 * 1000,
   })
 }
 

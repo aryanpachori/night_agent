@@ -59,8 +59,21 @@ router.get('/stream', requireDb, requireAuth, (req, res) => {
 router.get('/', requireDb, requireAuth, async (req, res) => {
   try {
     const { type, limit = '20', offset = '0' } = req.query;
+    const userId = req.user.userId;
+    const prisma = req.prisma;
+
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+    await prisma.alert.updateMany({
+      where: {
+        userId,
+        actionTaken: null,
+        createdAt: { lt: fiveMinutesAgo },
+      },
+      data: { actionTaken: 'expired' },
+    });
+
     const where = {
-      userId: req.user.userId,
+      userId,
       ...(type === 'bet'
         ? { actionTaken: { in: ['bet_full', 'bet_half'] } }
         : type === 'skipped'
@@ -70,13 +83,13 @@ router.get('/', requireDb, requireAuth, async (req, res) => {
             : {}),
     };
     const [rows, total] = await Promise.all([
-      req.prisma.alert.findMany({
+      prisma.alert.findMany({
         where,
         orderBy: { createdAt: 'desc' },
         take: Math.min(parseInt(limit, 10) || 20, 100),
         skip: parseInt(offset, 10) || 0,
       }),
-      req.prisma.alert.count({ where }),
+      prisma.alert.count({ where }),
     ]);
 
     const alerts = rows.map(a => ({
@@ -87,6 +100,9 @@ router.get('/', requireDb, requireAuth, async (req, res) => {
       profitAmountUsd: Math.max(0, (a.suggestedContracts ?? 0) - (a.suggestedAmount ?? 0)),
       aiConfidencePct: Math.round((a.myProbability ?? 0) * 100),
       eventName: buildEventName(a.marketQuestion, a.side),
+      isActionable:
+        !a.actionTaken &&
+        Date.now() - new Date(a.createdAt).getTime() < 5 * 60 * 1000,
     }));
 
     res.json({ alerts, total });

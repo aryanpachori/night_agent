@@ -17,7 +17,6 @@
     "@prisma/client": "^7.0.0",
     "@solana/web3.js": "^1.98.4",
     "axios": "^1.7.2",
-    "big-integer": "^1.6.52",
     "cors": "^2.8.6",
     "dotenv": "^16.4.5",
     "express": "^5.2.1",
@@ -29,7 +28,6 @@
     "openai": "^4.52.7",
     "pg": "^8.13.1",
     "rss-parser": "^3.13.0",
-    "telegram": "^2.26.22",
     "tweetnacl": "^1.0.3",
     "uuid": "^10.0.0"
   },

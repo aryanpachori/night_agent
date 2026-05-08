@@ -318,8 +318,47 @@ function createBot() {
         `👋 Hi\\! I'm *Night Agent* — a prediction market bet signal bot\\.\n\n` +
         `To receive alerts, you need to sign up on the website and connect your Telegram:\n\n` +
         `🔗 ${siteUrl}/login\n\n` +
+        `Send /connect to link your Telegram to the NightAgent dashboard\\.\n\n` +
         `_Once registered, you'll get bet signals directly in this chat\\._`,
       );
+    }
+  });
+
+  // /connect command — generates a one-time code for dashboard linking
+  bot.onText(/\/connect(?:@\w+)?/, async msg => {
+    const telegramId = msg.from?.id;
+    const firstName = msg.from?.first_name ?? 'there';
+    if (telegramId == null) return;
+    const prisma = getPrisma();
+    if (!prisma) {
+      await bot.sendMessage(telegramId, '❌ Database unavailable. Please try again.');
+      return;
+    }
+    try {
+      const code = Math.random().toString(36).slice(2, 8).toUpperCase();
+      const value = JSON.stringify({
+        telegramId: String(telegramId),
+        firstName,
+        username: msg.from?.username ?? null,
+        expiresAt: Date.now() + 15 * 60 * 1000,
+      });
+      await prisma.appStorage.upsert({
+        where: { key: `connect_${code}` },
+        update: { value },
+        create: { key: `connect_${code}`, value },
+      });
+      await bot.sendMessage(
+        telegramId,
+        `🔗 *Your NightAgent connect code:*\n\n` +
+          `\`${code}\`\n\n` +
+          `Enter this code on the NightAgent dashboard to connect your Telegram\\.\n\n` +
+          `⏰ Expires in 15 minutes\\.`,
+        { parse_mode: 'MarkdownV2' },
+      );
+      console.log(`[bot/connect] Code ${code} generated for telegramId ${telegramId}`);
+    } catch (err) {
+      console.error('[bot/connect]', err);
+      await bot.sendMessage(telegramId, '❌ Something went wrong. Please try again.');
     }
   });
 

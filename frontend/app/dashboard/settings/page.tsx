@@ -19,21 +19,21 @@ const allCategories = ['Crypto', 'Politics', 'Economics', 'Sports', 'Entertainme
 const riskModes = [
   {
     id: 'conservative',
-    label: 'Conservative',
+    label: 'Small',
     emoji: '🛡️',
     tagline: 'Small bets, play it safe',
     description: 'The bot will suggest small bet sizes. Lower risk, lower reward.',
   },
   {
     id: 'moderate',
-    label: 'Moderate',
+    label: 'Medium',
     emoji: '⚖️',
     tagline: 'Balanced — our recommendation',
     description: 'A good balance of risk and reward for most people.',
   },
   {
     id: 'aggressive',
-    label: 'Aggressive',
+    label: 'Large',
     emoji: '🚀',
     tagline: 'Bigger bets, higher reward',
     description: 'Larger bet sizes. Higher potential gains, but also higher losses.',
@@ -60,11 +60,9 @@ export default function SettingsPage() {
   const [autoSlPct, setAutoSlPct] = useState<number | null>(null)
   const [changed, setChanged] = useState(false)
   const [showResetConfirm, setShowResetConfirm] = useState(false)
-  const [phone, setPhone] = useState('')
   const [code, setCode] = useState('')
-  const [step, setStep] = useState<'phone' | 'otp' | 'done'>('phone')
+  const [step, setStep] = useState<'idle' | 'waiting' | 'done'>('idle')
   const [loading, setLoading] = useState(false)
-  const [countdown, setCountdown] = useState(0)
 
   useEffect(() => {
     if (!user) return
@@ -84,15 +82,9 @@ export default function SettingsPage() {
     if (user?.telegramId) {
       setStep('done')
     } else {
-      setStep('phone')
+      setStep('idle')
     }
   }, [user?.telegramId])
-
-  useEffect(() => {
-    if (countdown <= 0) return
-    const timer = window.setTimeout(() => setCountdown((c) => c - 1), 1000)
-    return () => window.clearTimeout(timer)
-  }, [countdown])
 
   const resetChanges = () => {
     const b = baseline.current
@@ -141,55 +133,22 @@ export default function SettingsPage() {
 
   const telegramLinked = !!user?.telegramId
 
-  async function handleSendOTP() {
-    if (!phone.trim()) {
-      toast.error('Please enter your phone number')
+  async function handleConnectCode() {
+    if (code.trim().length !== 6) {
+      toast.error('Enter the 6-character code from the bot')
       return
     }
     setLoading(true)
     try {
-      await api.post('/api/auth/send-otp', { phone: phone.trim() })
-      setStep('otp')
-      setCountdown(60)
-      toast.success('OTP sent to your Telegram app')
+      const res = await api.post('/api/auth/connect-telegram', { code: code.trim().toUpperCase() })
+      if (res.data?.ok) {
+        setStep('done')
+        await refetchUser()
+        toast.success('Telegram connected! Bot will now send you alerts.')
+      }
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
-      toast.error(msg ?? 'Failed to send OTP')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  async function handleVerifyOTP() {
-    if (code.length < 4) {
-      toast.error('Please enter the full OTP code')
-      return
-    }
-    setLoading(true)
-    try {
-      await api.post('/api/auth/verify-otp', { phone: phone.trim(), code: code.trim() })
-      await refetchUser()
-      setStep('done')
-      setCode('')
-      toast.success('Telegram connected')
-    } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
-      toast.error(msg ?? 'Invalid OTP')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  async function handleResendOTP() {
-    if (countdown > 0) return
-    setLoading(true)
-    try {
-      await api.post('/api/auth/resend-otp', { phone: phone.trim() })
-      setCountdown(60)
-      toast.success('New OTP sent')
-    } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
-      toast.error(msg ?? 'Failed to resend code')
+      toast.error(msg ?? 'Invalid code. Try again.')
     } finally {
       setLoading(false)
     }
@@ -230,60 +189,88 @@ export default function SettingsPage() {
                   </p>
 
                   <div className="space-y-3">
-                    <div className="flex gap-2">
-                      <input
-                        type="tel"
-                        placeholder="+91 98765 43210"
-                        value={phone}
-                        onChange={(e) => setPhone(e.target.value)}
-                        className="w-full rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] px-4 py-2.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent)]/50 focus:outline-none"
-                      />
+                    {step === 'idle' && (
                       <Button
-                        variant="secondary"
+                        variant="primary"
                         size="sm"
-                        disabled={loading || !phone.trim()}
-                        onClick={() => void handleSendOTP()}
+                        onClick={() => setStep('waiting')}
+                        className="w-full"
                       >
-                        Send Code
+                        Connect Telegram
                       </Button>
-                    </div>
+                    )}
 
-                    {step === 'otp' && (
-                      <>
-                        <div className="flex gap-2">
-                          <input
-                            type="text"
-                            inputMode="numeric"
-                            maxLength={6}
-                            placeholder="12345"
-                            value={code}
-                            onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
-                            className="w-full rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] px-4 py-2.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent)]/50 focus:outline-none"
-                          />
-                          <Button
-                            variant="primary"
-                            size="sm"
-                            disabled={loading || code.length < 4}
-                            onClick={() => void handleVerifyOTP()}
+                    {step === 'waiting' && (
+                      <div className="space-y-4">
+                        <div className="rounded-xl bg-[var(--bg-secondary)] p-3">
+                          <p className="mb-1 text-xs font-semibold text-[var(--text-primary)]">Step 1 — Open the bot</p>
+                          <a
+                            href="https://t.me/nightagentt_bot"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-sm font-medium text-[#2AABEE] hover:opacity-80"
                           >
-                            Verify
-                          </Button>
+                            Open @nightagentt_bot →
+                          </a>
                         </div>
-                        <div className="text-xs text-[var(--text-muted)]">
-                          {countdown > 0 ? (
-                            <span>Resend code in {countdown}s</span>
-                          ) : (
+                        <div className="rounded-xl bg-[var(--bg-secondary)] p-3">
+                          <p className="mb-1 text-xs font-semibold text-[var(--text-primary)]">Step 2 — Send this message</p>
+                          <div className="mt-1 flex items-center justify-between rounded-lg bg-[var(--bg-card)] px-3 py-2">
+                            <code className="text-sm font-bold text-[var(--accent)]">/connect</code>
                             <button
                               type="button"
-                              className="text-[var(--accent)] hover:opacity-80"
-                              onClick={() => void handleResendOTP()}
-                              disabled={loading}
+                              onClick={() => {
+                                void navigator.clipboard.writeText('/connect')
+                                toast.success('Copied!')
+                              }}
+                              className="text-xs text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
                             >
-                              Resend code
+                              copy
                             </button>
-                          )}
+                          </div>
                         </div>
-                      </>
+                        <div className="space-y-2">
+                          <p className="text-xs font-semibold text-[var(--text-primary)]">Step 3 — Enter the code from bot</p>
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              maxLength={6}
+                              placeholder="AB12CD"
+                              value={code}
+                              onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') void handleConnectCode()
+                              }}
+                              className="flex-1 rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2.5 text-center font-mono text-lg font-bold tracking-[0.3em] text-[var(--text-primary)] placeholder:tracking-normal focus:border-[var(--accent)]/50 focus:outline-none"
+                            />
+                            <Button
+                              variant="primary"
+                              size="sm"
+                              disabled={loading || code.length !== 6}
+                              onClick={() => void handleConnectCode()}
+                            >
+                              {loading ? '...' : 'Connect'}
+                            </Button>
+                          </div>
+                        </div>
+                        <PollForConnection
+                          onConnected={() => {
+                            setStep('done')
+                            void refetchUser()
+                            toast.success('Telegram connected! Bot will now send you alerts.')
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setStep('idle')
+                            setCode('')
+                          }}
+                          className="w-full text-xs text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
+                        >
+                          Cancel
+                        </button>
+                      </div>
                     )}
                   </div>
                 </>
@@ -609,5 +596,30 @@ export default function SettingsPage() {
         )}
       </AnimatePresence>
     </div>
+  )
+}
+
+function PollForConnection({ onConnected }: { onConnected: () => void }) {
+  useEffect(() => {
+    const interval = window.setInterval(async () => {
+      try {
+        const res = await api.get('/api/auth/me')
+        if (res.data?.telegramId) {
+          window.clearInterval(interval)
+          onConnected()
+        }
+      } catch {
+        // no-op, keep polling
+      }
+    }, 3000)
+
+    return () => window.clearInterval(interval)
+  }, [onConnected])
+
+  return (
+    <p className="flex items-center justify-center gap-1.5 text-center text-xs text-[var(--text-muted)]">
+      <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-[var(--accent)]" />
+      Waiting for you to send /connect...
+    </p>
   )
 }

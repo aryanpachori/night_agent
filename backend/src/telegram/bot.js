@@ -319,23 +319,79 @@ function createBot() {
     const totalCost = Number(row.totalCost ?? 0);
     if (!Number.isFinite(entry) || entry <= 0 || !Number.isFinite(totalCost) || totalCost <= 0) return null;
     const contracts = totalCost / entry;
-    const pnl = side === 'YES' ? (closePrice - entry) * contracts : (entry - closePrice) * contracts;
-    const exitValue = totalCost + pnl;
+    const isHalf = exitReason === 'manual_telegram_half';
+    const pnlPerContract = side === 'YES' ? closePrice - entry : entry - closePrice;
     const now = new Date();
+    if (isHalf) {
+      const halfContracts = Math.floor(contracts / 2);
+      if (halfContracts < 1) return null;
+      const closedCost = halfContracts * entry;
+      const closedPnl = pnlPerContract * halfContracts;
+      const proceeds = closedCost + closedPnl;
+      const remainingContracts = contracts - halfContracts;
+      const remainingCost = remainingContracts * entry;
+      const basePayload = row.payload && typeof row.payload === 'object' ? row.payload : {};
+      await prisma.$transaction([
+        prisma.paperPosition.create({
+          data: {
+            id: `pos_${crypto.randomUUID().replace(/-/g, '')}`,
+            userId,
+            status: 'closed',
+            marketId: row.marketId,
+            side: row.side,
+            entryPrice: row.entryPrice,
+            totalCost: closedCost,
+            pnl: closedPnl,
+            exitReason,
+            openedAt: row.openedAt,
+            closedAt: now,
+            payload: {
+              ...basePayload,
+              contracts: halfContracts,
+              totalCost: closedCost,
+              pnl: closedPnl,
+              status: 'closed',
+              exitReason,
+              closedAt: now.toISOString(),
+            },
+          },
+        }),
+        prisma.paperPosition.update({
+          where: { id: row.id },
+          data: {
+            totalCost: remainingCost,
+            payload: {
+              ...basePayload,
+              contracts: remainingContracts,
+              totalCost: remainingCost,
+            },
+          },
+        }),
+        prisma.wallet.update({
+          where: { userId },
+          data: {
+            balance: { increment: proceeds },
+            totalPnl: { increment: closedPnl },
+          },
+        }),
+      ]);
+      return { id: row.id, pnl: closedPnl };
+    }
+
+    const pnl = pnlPerContract * contracts;
+    const exitValue = totalCost + pnl;
     await prisma.$transaction([
       prisma.paperPosition.update({
         where: { id: row.id },
         data: {
           status: 'closed',
           pnl,
-          closePrice,
           exitReason,
           closedAt: now,
           payload: {
             ...(row.payload && typeof row.payload === 'object' ? row.payload : {}),
             status: 'closed',
             pnl,
-            closePrice,
             exitReason,
             closedAt: now.toISOString(),
           },

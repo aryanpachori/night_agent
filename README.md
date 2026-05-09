@@ -1,4 +1,4 @@
-ightAgent is an AI agent that runs 24/7, scanning 
+NightAgent is an AI agent that runs 24/7, scanning 
 Jupiter markets every 60 seconds using Gemini AI, Black-Scholes 
 probability models, and Kelly Criterion bet sizing. When it 
 finds a mispriced market, it sends a plain-English alert via 

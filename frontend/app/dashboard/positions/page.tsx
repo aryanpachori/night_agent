@@ -50,6 +50,7 @@ export default function PositionsPage() {
   }
 
   const totals = activeTab === 'closed' ? closedTotals : openTotals
+  const worthLabel = activeTab === 'closed' ? 'Total Returned' : 'Currently Worth'
 
   return (
     <div className="flex flex-1 flex-col">
@@ -76,7 +77,7 @@ export default function PositionsPage() {
             },
             {
               icon: TrendingUp,
-              label: 'Currently Worth',
+              label: worthLabel,
               value: formatUSD(totals.worth),
               color: 'text-[var(--text-primary)]',
             },
@@ -101,6 +102,11 @@ export default function PositionsPage() {
             </div>
           ))}
         </motion.div>
+        <p className="text-[11px] leading-relaxed text-[var(--text-muted)]">
+          The numbers above sum only the bets in the <strong className="text-[var(--text-secondary)]">{activeTab}</strong>{' '}
+          tab. Balance and profit % in the header are your full paper wallet (starting grant plus every stake and
+          settlement).
+        </p>
 
         <Tabs tabs={tabs} active={activeTab} onChange={setActiveTab} className="w-fit" />
 
